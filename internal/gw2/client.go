@@ -260,7 +260,9 @@ func (c *Client) getOnce(ctx context.Context, path string, q url.Values, auth bo
 		var e struct {
 			Text string `json:"text"`
 		}
-		text := strings.TrimSpace(string(body))
+		// Non-JSON bodies (e.g. the HTML page served while the API is down) are not
+		// repeated: they are noisy and include the caller's IP address.
+		text := http.StatusText(resp.StatusCode) + " (non-JSON response)"
 		if json.Unmarshal(body, &e) == nil && e.Text != "" {
 			text = e.Text
 		}

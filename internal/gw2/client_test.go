@@ -218,3 +218,15 @@ func TestRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestNonJSONErrorIsSummarised(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("<html><body><p>Page not found</p><dd>203.0.113.7</dd></body></html>"))
+	})
+	_, err := c.AccountSkins(context.Background())
+	if err == nil || err.Error() != "gw2 api: status 404: Not Found (non-JSON response)" {
+		t.Fatalf("err = %v", err)
+	}
+}
