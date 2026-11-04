@@ -145,6 +145,22 @@ func (c *Client) CurrentBuys(ctx context.Context) ([]Transaction, error) {
 	}
 }
 
+// DeliveryItem is an item waiting in the trading post delivery box.
+type DeliveryItem struct {
+	ID    int `json:"id"`
+	Count int `json:"count"`
+}
+
+// Delivery returns the items in the trading post delivery box. Needs the
+// "tradingpost" permission.
+func (c *Client) Delivery(ctx context.Context) ([]DeliveryItem, error) {
+	var d struct {
+		Items []DeliveryItem `json:"items"`
+	}
+	_, err := c.get(ctx, "/v2/commerce/delivery", nil, true, &d)
+	return d.Items, err
+}
+
 // CommerceItemIDs returns the ids of every item that can be traded on the trading post.
 func (c *Client) CommerceItemIDs(ctx context.Context) ([]int, error) {
 	var ids []int

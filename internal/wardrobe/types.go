@@ -67,6 +67,8 @@ type Snapshot struct {
 	Owned    map[int]bool
 	Orders   []Order
 	Prices   map[int]Price
+	// Delivery is the trading post delivery box: item id to count.
+	Delivery map[int]int
 }
 
 // OrdersUpdate is the result of an orders refresh.
@@ -76,4 +78,6 @@ type OrdersUpdate struct {
 	Orders []Order
 	// Prices for items we have orders on, from the order book.
 	Prices map[int]Price
+	// Delivery is the trading post delivery box: item id to count.
+	Delivery map[int]int
 }

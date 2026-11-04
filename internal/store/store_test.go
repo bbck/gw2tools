@@ -86,13 +86,17 @@ func TestOrdersAndPrices(t *testing.T) {
 	}
 
 	err := s.SaveOrders(ctx, wardrobe.OrdersUpdate{
-		At:     t1,
-		Owned:  []int{1, 5},
-		Orders: []wardrobe.Order{{ID: 100, ItemID: 10, Price: 55, Quantity: 1, Created: t1}},
-		Prices: map[int]wardrobe.Price{10: {ItemID: 10, BuyPrice: 55, BuyQuantity: 3, SellPrice: 90, SellQuantity: 2, TopBuyQuantity: 1}},
+		At:       t1,
+		Owned:    []int{1, 5},
+		Orders:   []wardrobe.Order{{ID: 100, ItemID: 10, Price: 55, Quantity: 1, Created: t1}},
+		Prices:   map[int]wardrobe.Price{10: {ItemID: 10, BuyPrice: 55, BuyQuantity: 3, SellPrice: 90, SellQuantity: 2, TopBuyQuantity: 1}},
+		Delivery: map[int]int{20: 2, 30: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if snap, _ := s.LoadSnapshot(ctx); len(snap.Delivery) != 2 || snap.Delivery[20] != 2 {
+		t.Fatalf("delivery = %v", snap.Delivery)
 	}
 	if err := s.SavePrices(ctx, []int{10, 20, 30}, map[int]wardrobe.Price{
 		20: {ItemID: 20, BuyPrice: 7, SellPrice: 9},
@@ -117,6 +121,9 @@ func TestOrdersAndPrices(t *testing.T) {
 	}
 	if !snap.OrdersAt.Equal(t2) || !snap.PricesAt.Equal(t2) {
 		t.Errorf("times = %v %v", snap.OrdersAt, snap.PricesAt)
+	}
+	if len(snap.Delivery) != 0 {
+		t.Errorf("delivery not replaced: %v", snap.Delivery)
 	}
 	if len(snap.Owned) != 3 || len(snap.Orders) != 0 {
 		t.Errorf("owned = %v orders = %v", snap.Owned, snap.Orders)
@@ -144,7 +151,7 @@ func TestOrdersAndPrices(t *testing.T) {
 func firstSeen(t *testing.T, s *Store) map[int]time.Time {
 	t.Helper()
 	out := map[int]time.Time{}
-	err := s.each(context.Background(), "SELECT skin_id, first_seen FROM account_skins", nil, func(rows *sql.Rows) error {
+	err := each(context.Background(), s.db, "SELECT skin_id, first_seen FROM account_skins", nil, func(rows *sql.Rows) error {
 		var id int
 		var at int64
 		if err := rows.Scan(&id, &at); err != nil {
@@ -217,7 +224,7 @@ func TestReopenKeepsDataAndSkipsMigrations(t *testing.T) {
 		t.Fatalf("catalogue after reopen = %+v, %v", c, err)
 	}
 	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
 		t.Fatalf("user_version = %d, %v", version, err)
 	}
 }

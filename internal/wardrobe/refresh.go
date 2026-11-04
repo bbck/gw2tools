@@ -14,14 +14,16 @@ import (
 type API interface {
 	AccountSkins(ctx context.Context) ([]int, error)
 	CurrentBuys(ctx context.Context) ([]gw2.Transaction, error)
+	Delivery(ctx context.Context) ([]gw2.DeliveryItem, error)
 	Prices(ctx context.Context, ids []int) ([]gw2.Price, error)
 	Listings(ctx context.Context, ids []int) ([]gw2.Listing, error)
 }
 
-// RefreshOrders is the frequent, cheap refresh: unlocked skins, open buy orders, and
-// the order book for the skin items we have orders on. A handful of requests.
+// RefreshOrders is the frequent, cheap refresh: unlocked skins, open buy orders, the
+// delivery box, and the order book for the skin items we have orders on. A handful of
+// requests.
 func RefreshOrders(ctx context.Context, api API, c Catalog, now time.Time) (OrdersUpdate, error) {
-	u := OrdersUpdate{At: now, Prices: map[int]Price{}}
+	u := OrdersUpdate{At: now, Prices: map[int]Price{}, Delivery: map[int]int{}}
 	var err error
 	if u.Owned, err = api.AccountSkins(ctx); err != nil {
 		return u, fmt.Errorf("account skins: %w", err)
@@ -37,6 +39,17 @@ func RefreshOrders(ctx context.Context, api API, c Catalog, now time.Time) (Orde
 			orderItems[b.ItemID] = true
 		}
 	}
+	// The delivery box is read after the orders, so an order that fills in between is
+	// seen twice (open, and delivered) rather than not at all. The leftover order then
+	// shows as redundant until the next refresh, instead of the skin briefly showing as
+	// missing with no order.
+	box, err := api.Delivery(ctx)
+	if err != nil {
+		return u, fmt.Errorf("delivery box: %w", err)
+	}
+	for _, it := range box {
+		u.Delivery[it.ID] += it.Count
+	}
 	listings, err := api.Listings(ctx, slices.Sorted(maps.Keys(orderItems)))
 	if err != nil {
 		return u, fmt.Errorf("listings: %w", err)
@@ -48,20 +61,21 @@ func RefreshOrders(ctx context.Context, api API, c Catalog, now time.Time) (Orde
 }
 
 // PriceCandidates are the items worth pricing: those that unlock a Guaranteed Wardrobe
-// Unlock skin we don't have. Items we have orders on are left out because
-// RefreshOrders keeps them current.
-func PriceCandidates(c Catalog, owned map[int]bool, orders []Order) []int {
+// Unlock skin we don't have and haven't bought (an item for it in the delivery box).
+// Items we have orders on are left out because RefreshOrders keeps them current.
+func PriceCandidates(c Catalog, snap Snapshot) []int {
 	skip := map[int]bool{}
-	for _, o := range orders {
+	for _, o := range snap.Orders {
 		skip[o.ItemID] = true
 	}
+	locked, _ := c.locked(snap)
 	var ids []int
 	for _, it := range c.Items {
 		if skip[it.ID] {
 			continue
 		}
 		for _, s := range it.Skins {
-			if c.Skins[s].GWU && !owned[s] {
+			if c.Skins[s].GWU && locked(s) {
 				ids = append(ids, it.ID)
 				break
 			}

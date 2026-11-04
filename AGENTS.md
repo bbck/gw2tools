@@ -8,7 +8,7 @@ gw2tools is a personal website for tracking things in Guild Wars 2. It is a sing
 
 ### Features
 
-- **Wardrobe** (`/wardrobe`): the cheapest missing Guaranteed Wardrobe Unlock (GWU) skins on the trading post, whether there is a buy order on each, and whether that order is still the top bid. Also lists orders on missing skins outside the cheapest N (e.g. the price rose) and orders on skins that are already unlocked.
+- **Wardrobe** (`/wardrobe`): bought GWU skins waiting in the delivery box, then the cheapest missing Guaranteed Wardrobe Unlock (GWU) skins on the trading post, whether there is a buy order on each, and whether that order is still the top bid. Also lists orders on missing skins outside the cheapest N (e.g. the price rose) and orders on skins that are already unlocked or bought.
 
 ### Layout
 
@@ -23,7 +23,9 @@ gw2tools is a personal website for tracking things in Guild Wars 2. It is a sing
 
 - **Catalogue (static)**: skins, their GWU flag, and the tradeable items that unlock them. GWU membership comes from immortius' [Wardrobe Unlock Analyser](https://github.com/immortius/gw2-wardrobe-unlock) `content.json`, because the GW2 API does not expose it. Item-to-skin mapping comes from `/v2/items`. Loaded only by `gw2tools seed`.
 - **Account and market state (live)**, refreshed by the server:
-  - **Orders refresh** (every minute at most): `/v2/account/skins`, `/v2/commerce/transactions/current/buys`, and `/v2/commerce/listings` for skin items with an order (top bid, lowest sell, and tie depth). About 3–4 requests.
+  - **Orders refresh** (every minute at most): `/v2/account/skins`, `/v2/commerce/transactions/current/buys`, `/v2/commerce/delivery`, and `/v2/commerce/listings` for skin items with an order (top bid, lowest sell, and tie depth). About 4–5 requests.
+  - Skins with an item in the delivery box count as bought: they're listed in their own section, left out of the cheapest list, and not priced. Orders still open on them are listed with the redundant ones.
+  - Inventory isn't tracked. The design assumes an item taken from the delivery box is unlocked within about a minute, before the next orders refresh. Until then its skin may briefly reappear as missing, or have no price until the next hourly pass; that's accepted.
   - **Prices refresh** (every hour at most): `/v2/commerce/prices` for items that unlock a missing GWU skin, excluding items with orders. About 90 requests at 200 ms spacing, shrinking as skins are unlocked. The start time of every run, including failed ones, is stored in `meta` (`prices_attempted_at`, the schedule clock), so restarts and failures don't trigger extra runs. Saving drops stored prices only for items no longer wanted; wanted items missing from a response keep their old price.
   - Unlocked skins accumulate in `account_skins` with `first_seen` and are never deleted. Items for unlocked skins are never priced.
   - Minimum intervals are enforced in code (`web.MinOrdersInterval`, `web.MinPricesInterval`). Don't add on-demand refresh that bypasses them.

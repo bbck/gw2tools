@@ -66,10 +66,19 @@ type Row struct {
 	Status Status
 }
 
+// DeliveryRow is an item in the delivery box that unlocks GWU skins we don't have.
+type DeliveryRow struct {
+	Item  Item
+	Count int
+	Skins []Skin // the locked GWU skins it unlocks
+}
+
 type View struct {
 	OrdersAt time.Time
 	PricesAt time.Time
 	Limit    int
+	// Delivery are delivery box items that unlock a locked GWU skin, by skin name.
+	Delivery []DeliveryRow
 	// Cheapest is the Limit cheapest unowned Guaranteed Wardrobe Unlock skins.
 	Cheapest []Row
 	// CheapestCost is the sum of Cost over Cheapest.
@@ -79,7 +88,7 @@ type View struct {
 	Others []Row
 	// OthersCost is the sum of Cost over Others, the same measure as CheapestCost.
 	OthersCost int
-	// Redundant are orders on items whose skins are all already unlocked.
+	// Redundant are orders on items whose skins are all already unlocked or bought.
 	Redundant []OrderRow
 	// OtherOrders counts orders on items that do not unlock a skin; they are ignored.
 	OtherOrders int
@@ -92,6 +101,8 @@ type View struct {
 func BuildView(c Catalog, snap Snapshot, limit int) View {
 	v := View{OrdersAt: snap.OrdersAt, PricesAt: snap.PricesAt, Limit: limit}
 	skinItems := c.skinItems()
+	locked, delivery := c.locked(snap)
+	v.Delivery = delivery
 
 	// Quantity we are bidding per item and price, to tell "top" from "tied".
 	type itemPrice struct{ item, price int }
@@ -108,17 +119,17 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 			continue
 		}
 		or := orderRow(o, it, snap.Prices, ourQty[itemPrice{o.ItemID, o.Price}])
-		var unowned []int
+		var wanted []int
 		for _, s := range it.Skins {
-			if _, known := c.Skins[s]; known && !snap.Owned[s] {
-				unowned = append(unowned, s)
+			if _, known := c.Skins[s]; known && locked(s) {
+				wanted = append(wanted, s)
 			}
 		}
-		if len(unowned) == 0 {
+		if len(wanted) == 0 {
 			v.Redundant = append(v.Redundant, or)
 			continue
 		}
-		for _, s := range unowned {
+		for _, s := range wanted {
 			ordersBySkin[s] = append(ordersBySkin[s], or)
 		}
 	}
@@ -132,6 +143,9 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 		v.GWUTotal++
 		if snap.Owned[sk.ID] {
 			v.GWUOwned++
+			continue
+		}
+		if !locked(sk.ID) { // bought
 			continue
 		}
 		if r, ok := skinRow(sk, skinItems[sk.ID], c, snap.Prices, ordersBySkin[sk.ID]); ok {
@@ -167,6 +181,38 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 		return cmp.Or(cmp.Compare(a.Item.Name, b.Item.Name), cmp.Compare(a.ID, b.ID))
 	})
 	return v
+}
+
+// locked reports which skins the account still needs: not unlocked, and not bought.
+// A skin with an item in the delivery box counts as bought, because collecting the
+// item unlocks it. Every "is this skin still wanted" check goes through locked.
+// delivery lists the delivery box items that unlock a locked GWU skin.
+func (c Catalog) locked(snap Snapshot) (locked func(skin int) bool, delivery []DeliveryRow) {
+	bought := map[int]bool{}
+	for itemID, count := range snap.Delivery {
+		it, ok := c.Items[itemID]
+		if !ok {
+			continue
+		}
+		r := DeliveryRow{Item: it, Count: count}
+		for _, id := range it.Skins {
+			if snap.Owned[id] {
+				continue
+			}
+			bought[id] = true
+			if sk := c.Skins[id]; sk.GWU {
+				r.Skins = append(r.Skins, sk)
+			}
+		}
+		if len(r.Skins) > 0 {
+			slices.SortFunc(r.Skins, func(a, b Skin) int { return cmp.Compare(a.Name, b.Name) })
+			delivery = append(delivery, r)
+		}
+	}
+	slices.SortFunc(delivery, func(a, b DeliveryRow) int {
+		return cmp.Or(cmp.Compare(a.Skins[0].Name, b.Skins[0].Name), cmp.Compare(a.Item.ID, b.Item.ID))
+	})
+	return func(skin int) bool { return !snap.Owned[skin] && !bought[skin] }, delivery
 }
 
 func byCost(a, b Row) int {

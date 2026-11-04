@@ -15,6 +15,7 @@ type fakeAPI struct {
 	buys       []gw2.Transaction
 	prices     map[int]gw2.Price
 	listings   map[int]gw2.Listing
+	delivery   []gw2.DeliveryItem
 	err        error
 	priceIDs   []int
 	listingIDs []int
@@ -24,6 +25,8 @@ func (f *fakeAPI) AccountSkins(context.Context) ([]int, error) { return f.owned,
 func (f *fakeAPI) CurrentBuys(context.Context) ([]gw2.Transaction, error) {
 	return f.buys, nil
 }
+func (f *fakeAPI) Delivery(context.Context) ([]gw2.DeliveryItem, error) { return f.delivery, nil }
+
 func (f *fakeAPI) Prices(_ context.Context, ids []int) ([]gw2.Price, error) {
 	f.priceIDs = ids
 	return pick(f.prices, ids), nil
@@ -41,6 +44,7 @@ func TestRefreshOrders(t *testing.T) {
 			{ID: 2, ItemID: 50, Price: 100, Quantity: 1},
 			{ID: 3, ItemID: 999, Price: 100, Quantity: 1}, // not in the catalogue
 		},
+		delivery: []gw2.DeliveryItem{{ID: 30, Count: 1}, {ID: 30, Count: 2}, {ID: 40, Count: 1}},
 		listings: map[int]gw2.Listing{
 			50: {ID: 50,
 				Buys:  []gw2.ListingEntry{{UnitPrice: 110, Quantity: 2}, {UnitPrice: 90, Quantity: 9}},
@@ -62,6 +66,9 @@ func TestRefreshOrders(t *testing.T) {
 	if len(u.Orders) != 3 || !slices.Equal(u.Owned, []int{1, 2}) || !u.At.Equal(now) {
 		t.Errorf("update = %+v", u)
 	}
+	if u.Delivery[30] != 3 || u.Delivery[40] != 1 {
+		t.Errorf("delivery = %v", u.Delivery)
+	}
 	want := Price{ItemID: 50, BuyPrice: 110, BuyQuantity: 11, SellPrice: 200, SellQuantity: 5, TopBuyQuantity: 2}
 	if p := u.Prices[50]; p != want {
 		t.Errorf("price 50 = %+v, want %+v", p, want)
@@ -70,9 +77,16 @@ func TestRefreshOrders(t *testing.T) {
 
 func TestPriceCandidates(t *testing.T) {
 	// Skin 1 owned; item 40 has an order; item 50 is a non-GWU skin.
-	got := PriceCandidates(testCatalog(), map[int]bool{1: true}, []Order{{ItemID: 40}})
+	snap := Snapshot{Owned: map[int]bool{1: true}, Orders: []Order{{ItemID: 40}}}
+	got := PriceCandidates(testCatalog(), snap)
 	if want := []int{20, 30}; !slices.Equal(got, want) {
 		t.Errorf("candidates = %v, want %v", got, want)
+	}
+	// Bought the helm (item 20 in the delivery box): its skin is no longer priced.
+	snap.Delivery = map[int]int{20: 1}
+	got = PriceCandidates(testCatalog(), snap)
+	if want := []int{30}; !slices.Equal(got, want) {
+		t.Errorf("candidates with delivery = %v, want %v", got, want)
 	}
 }
 

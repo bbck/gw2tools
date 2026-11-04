@@ -224,3 +224,71 @@ func TestRowStatusShowsMostUrgentOrder(t *testing.T) {
 		t.Fatalf("others = %+v, want skin 1 outbid", v.Others)
 	}
 }
+
+func TestDeliveryBoxSkins(t *testing.T) {
+	snap := Snapshot{
+		Owned: map[int]bool{3: true},
+		Prices: map[int]Price{
+			10: price(10, 300, 400),
+			20: price(20, 50, 60),
+			30: price(30, 1000, 2000),
+			40: price(40, 70, 80),
+		},
+		// Bought the helm (skin 2) and the box (skins 3, owned, and 4); item 999 is
+		// not a skin item; item 50 unlocks a non-GWU skin.
+		Delivery: map[int]int{20: 2, 30: 1, 999: 5, 50: 1},
+	}
+	v := BuildView(testCatalog(), snap, 25)
+
+	if len(v.Delivery) != 2 {
+		t.Fatalf("delivery = %+v", v.Delivery)
+	}
+	if d := v.Delivery[0]; d.Item.ID != 20 || d.Count != 2 || len(d.Skins) != 1 || d.Skins[0].ID != 2 {
+		t.Errorf("first delivery row = %+v, want the helm", d)
+	}
+	if d := v.Delivery[1]; d.Item.ID != 30 || len(d.Skins) != 1 || d.Skins[0].ID != 4 {
+		t.Errorf("box row = %+v, want only the locked skin 4", d)
+	}
+	// Bought skins leave the cheapest list; only Alpha (skin 1) remains.
+	var cheapest []int
+	for _, r := range v.Cheapest {
+		cheapest = append(cheapest, r.Skin.ID)
+	}
+	if !slices.Equal(cheapest, []int{1}) {
+		t.Errorf("cheapest = %v, want [1]", cheapest)
+	}
+}
+
+func TestOrdersOnBoughtSkinsAreRedundant(t *testing.T) {
+	snap := Snapshot{
+		Owned: map[int]bool{},
+		Orders: []Order{
+			{ID: 1, ItemID: 11, Price: 5, Quantity: 1},   // skin 1, bought via item 10: redundant
+			{ID: 2, ItemID: 20, Price: 50, Quantity: 1},  // leftover of a part-filled order: redundant
+			{ID: 3, ItemID: 30, Price: 900, Quantity: 1}, // box: skin 4 bought, skin 3 still wanted
+		},
+		Prices: map[int]Price{
+			10: price(10, 10, 20),
+			11: price(11, 10, 20),
+			20: price(20, 50, 60),
+			30: price(30, 1000, 2000),
+			40: price(40, 70, 80),
+		},
+		Delivery: map[int]int{10: 1, 20: 1, 40: 1},
+	}
+	v := BuildView(testCatalog(), snap, 0)
+
+	var redundant []int
+	for _, o := range v.Redundant {
+		redundant = append(redundant, o.ID)
+	}
+	if !slices.Equal(redundant, []int{1, 2}) {
+		t.Errorf("redundant orders = %v, want [1 2]", redundant)
+	}
+	if len(v.Others) != 1 || v.Others[0].Skin.ID != 3 {
+		t.Fatalf("others = %+v, want only skin 3", v.Others)
+	}
+	if v.OthersCost != 1000 {
+		t.Errorf("OthersCost = %d, want 1000", v.OthersCost)
+	}
+}

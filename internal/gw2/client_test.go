@@ -219,6 +219,22 @@ func TestRequests(t *testing.T) {
 	}
 }
 
+func TestDelivery(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/commerce/delivery" || r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("request = %s %q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Write([]byte(`{"coins":1234,"items":[{"id":10,"count":2},{"id":11,"count":1}]}`))
+	})
+	d, err := c.Delivery(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d) != 2 || d[0].ID != 10 || d[0].Count != 2 {
+		t.Fatalf("delivery = %+v", d)
+	}
+}
+
 func TestNonJSONErrorIsSummarised(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

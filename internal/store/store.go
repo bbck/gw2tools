@@ -147,7 +147,7 @@ func (s *Store) ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error {
 // LoadCatalog reads the seeded skins and items.
 func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
 	c := wardrobe.Catalog{Skins: map[int]wardrobe.Skin{}, Items: map[int]wardrobe.Item{}}
-	err := s.each(ctx, "SELECT id, name, section, type, rarity, gwu FROM skins", nil, func(rows *sql.Rows) error {
+	err := each(ctx, s.db, "SELECT id, name, section, type, rarity, gwu FROM skins", nil, func(rows *sql.Rows) error {
 		var sk wardrobe.Skin
 		if err := rows.Scan(&sk.ID, &sk.Name, &sk.Section, &sk.Type, &sk.Rarity, &sk.GWU); err != nil {
 			return err
@@ -158,7 +158,7 @@ func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
 	if err != nil {
 		return c, err
 	}
-	err = s.each(ctx, "SELECT id, name, rarity FROM items", nil, func(rows *sql.Rows) error {
+	err = each(ctx, s.db, "SELECT id, name, rarity FROM items", nil, func(rows *sql.Rows) error {
 		var it wardrobe.Item
 		if err := rows.Scan(&it.ID, &it.Name, &it.Rarity); err != nil {
 			return err
@@ -169,7 +169,7 @@ func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
 	if err != nil {
 		return c, err
 	}
-	err = s.each(ctx, "SELECT item_id, skin_id FROM item_skins ORDER BY item_id, skin_id", nil, func(rows *sql.Rows) error {
+	err = each(ctx, s.db, "SELECT item_id, skin_id FROM item_skins ORDER BY item_id, skin_id", nil, func(rows *sql.Rows) error {
 		var itemID, skinID int
 		if err := rows.Scan(&itemID, &skinID); err != nil {
 			return err
@@ -212,6 +212,18 @@ func (s *Store) SaveOrders(ctx context.Context, u wardrobe.OrdersUpdate) error {
 		if err := upsertPrices(ctx, tx, u.Prices, u.At); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM delivery"); err != nil {
+			return err
+		}
+		delivery, err := tx.PrepareContext(ctx, "INSERT INTO delivery (item_id, count) VALUES (?, ?)")
+		if err != nil {
+			return err
+		}
+		for id, count := range u.Delivery {
+			if _, err := delivery.ExecContext(ctx, id, count); err != nil {
+				return err
+			}
+		}
 		if err := setMetaTime(ctx, tx, metaOrdersAt, u.At); err != nil {
 			return err
 		}
@@ -241,17 +253,28 @@ func (s *Store) SavePrices(ctx context.Context, keep []int, prices map[int]wardr
 	})
 }
 
-// LoadSnapshot reads the stored account and market state.
+// LoadSnapshot reads the stored account and market state. The reads share one
+// transaction, so a refresh saved meanwhile is seen either entirely or not at all.
 func (s *Store) LoadSnapshot(ctx context.Context) (wardrobe.Snapshot, error) {
-	snap := wardrobe.Snapshot{Owned: map[int]bool{}, Prices: map[int]wardrobe.Price{}}
+	var snap wardrobe.Snapshot
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		snap, err = loadSnapshot(ctx, tx)
+		return err
+	})
+	return snap, err
+}
+
+func loadSnapshot(ctx context.Context, tx *sql.Tx) (wardrobe.Snapshot, error) {
+	snap := wardrobe.Snapshot{Owned: map[int]bool{}, Prices: map[int]wardrobe.Price{}, Delivery: map[int]int{}}
 	var err error
-	if snap.OrdersAt, err = s.metaTime(ctx, metaOrdersAt); err != nil {
+	if snap.OrdersAt, err = metaTime(ctx, tx, metaOrdersAt); err != nil {
 		return snap, err
 	}
-	if snap.PricesAt, err = s.metaTime(ctx, metaPricesAt); err != nil {
+	if snap.PricesAt, err = metaTime(ctx, tx, metaPricesAt); err != nil {
 		return snap, err
 	}
-	err = s.each(ctx, "SELECT skin_id FROM account_skins", nil, func(rows *sql.Rows) error {
+	err = each(ctx, tx, "SELECT skin_id FROM account_skins", nil, func(rows *sql.Rows) error {
 		var id int
 		if err := rows.Scan(&id); err != nil {
 			return err
@@ -262,7 +285,7 @@ func (s *Store) LoadSnapshot(ctx context.Context) (wardrobe.Snapshot, error) {
 	if err != nil {
 		return snap, err
 	}
-	err = s.each(ctx, "SELECT id, item_id, price, quantity, created FROM buy_orders ORDER BY id", nil, func(rows *sql.Rows) error {
+	err = each(ctx, tx, "SELECT id, item_id, price, quantity, created FROM buy_orders ORDER BY id", nil, func(rows *sql.Rows) error {
 		var o wardrobe.Order
 		var created int64
 		if err := rows.Scan(&o.ID, &o.ItemID, &o.Price, &o.Quantity, &created); err != nil {
@@ -275,7 +298,18 @@ func (s *Store) LoadSnapshot(ctx context.Context) (wardrobe.Snapshot, error) {
 	if err != nil {
 		return snap, err
 	}
-	err = s.each(ctx, "SELECT item_id, buy_price, buy_quantity, sell_price, sell_quantity, top_buy_quantity FROM prices", nil, func(rows *sql.Rows) error {
+	err = each(ctx, tx, "SELECT item_id, count FROM delivery", nil, func(rows *sql.Rows) error {
+		var id, count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return err
+		}
+		snap.Delivery[id] = count
+		return nil
+	})
+	if err != nil {
+		return snap, err
+	}
+	err = each(ctx, tx, "SELECT item_id, buy_price, buy_quantity, sell_price, sell_quantity, top_buy_quantity FROM prices", nil, func(rows *sql.Rows) error {
 		var p wardrobe.Price
 		if err := rows.Scan(&p.ItemID, &p.BuyPrice, &p.BuyQuantity, &p.SellPrice, &p.SellQuantity, &p.TopBuyQuantity); err != nil {
 			return err
@@ -294,12 +328,12 @@ func (s *Store) SetPricesAttempt(ctx context.Context, at time.Time) error {
 
 // PricesAttemptedAt is when the last prices refresh started, zero if never.
 func (s *Store) PricesAttemptedAt(ctx context.Context) (time.Time, error) {
-	return s.metaTime(ctx, metaPricesTried)
+	return metaTime(ctx, s.db, metaPricesTried)
 }
 
 // SeededAt is when the catalogue was last seeded, zero if never.
 func (s *Store) SeededAt(ctx context.Context) (time.Time, error) {
-	return s.metaTime(ctx, metaSeededAt)
+	return metaTime(ctx, s.db, metaSeededAt)
 }
 
 // Errors from the last failed refreshes; each is cleared by the next good run.
@@ -318,7 +352,7 @@ func (s *Store) SetPricesError(ctx context.Context, msg string) error {
 
 func (s *Store) Errors(ctx context.Context) (Errors, error) {
 	var e Errors
-	err := s.each(ctx, "SELECT key, value FROM meta WHERE key IN (?, ?)", []any{metaOrdersError, metaPricesError}, func(rows *sql.Rows) error {
+	err := each(ctx, s.db, "SELECT key, value FROM meta WHERE key IN (?, ?)", []any{metaOrdersError, metaPricesError}, func(rows *sql.Rows) error {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
 			return err
@@ -346,8 +380,8 @@ func upsertPrices(ctx context.Context, tx *sql.Tx, prices map[int]wardrobe.Price
 	return nil
 }
 
-func (s *Store) each(ctx context.Context, query string, args []any, fn func(*sql.Rows) error) error {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+func each(ctx context.Context, q querier, query string, args []any, fn func(*sql.Rows) error) error {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -360,9 +394,9 @@ func (s *Store) each(ctx context.Context, query string, args []any, fn func(*sql
 	return rows.Err()
 }
 
-func (s *Store) metaTime(ctx context.Context, key string) (time.Time, error) {
+func metaTime(ctx context.Context, q querier, key string) (time.Time, error) {
 	var v string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", key).Scan(&v)
+	err := q.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, nil
 	}
@@ -376,9 +410,14 @@ func (s *Store) metaTime(ctx context.Context, key string) (time.Time, error) {
 	return time.Unix(sec, 0).UTC(), nil
 }
 
-// execer is satisfied by both *sql.DB and *sql.Tx.
+// execer and querier are satisfied by both *sql.DB and *sql.Tx.
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func setMeta(ctx context.Context, ex execer, key, value string) error {

@@ -124,20 +124,17 @@ func (s *Server) Tick(ctx context.Context) error {
 	if s.now().Sub(tried) < s.intervals.Prices {
 		return ordersErr
 	}
-	owned := map[int]bool{}
+	snap := wardrobe.Snapshot{Owned: map[int]bool{}, Orders: u.Orders, Delivery: u.Delivery}
 	for _, id := range u.Owned {
-		owned[id] = true
+		snap.Owned[id] = true
 	}
-	orders := u.Orders
 	if ordersErr != nil {
-		// Fall back to the stored unlocks and orders.
-		snap, err := s.store.LoadSnapshot(ctx)
-		if err != nil {
+		// Fall back to the stored account state.
+		if snap, err = s.store.LoadSnapshot(ctx); err != nil {
 			return errors.Join(ordersErr, err)
 		}
-		owned, orders = snap.Owned, snap.Orders
 	}
-	return errors.Join(ordersErr, s.refreshPrices(ctx, cat, owned, orders))
+	return errors.Join(ordersErr, s.refreshPrices(ctx, cat, snap))
 }
 
 func (s *Server) refreshOrders(ctx context.Context, cat wardrobe.Catalog) (wardrobe.OrdersUpdate, error) {
@@ -150,11 +147,11 @@ func (s *Server) refreshOrders(ctx context.Context, cat wardrobe.Catalog) (wardr
 		s.recordError(ctx, s.store.SetOrdersError, err)
 		return u, fmt.Errorf("orders: %w", err)
 	}
-	s.log.Info("refreshed orders", "unlocked_skins", len(u.Owned), "orders", len(u.Orders), "took", s.now().Sub(start).Round(time.Millisecond))
+	s.log.Info("refreshed orders", "unlocked_skins", len(u.Owned), "orders", len(u.Orders), "delivery_items", len(u.Delivery), "took", s.now().Sub(start).Round(time.Millisecond))
 	return u, nil
 }
 
-func (s *Server) refreshPrices(ctx context.Context, cat wardrobe.Catalog, owned map[int]bool, orders []wardrobe.Order) error {
+func (s *Server) refreshPrices(ctx context.Context, cat wardrobe.Catalog, snap wardrobe.Snapshot) error {
 	s.pricing.Store(true)
 	defer s.pricing.Store(false)
 	start := s.now()
@@ -162,13 +159,13 @@ func (s *Server) refreshPrices(ctx context.Context, cat wardrobe.Catalog, owned 
 	if err := s.store.SetPricesAttempt(ctx, start); err != nil {
 		return fmt.Errorf("prices: recording attempt: %w", err)
 	}
-	ids := wardrobe.PriceCandidates(cat, owned, orders)
+	ids := wardrobe.PriceCandidates(cat, snap)
 	s.log.Info("refreshing prices", "items", len(ids), "requests", gw2.Requests(len(ids)))
 	prices, err := wardrobe.RefreshPrices(ctx, s.api, ids)
 	if err == nil {
 		// Keep the candidates and the order items (kept current by the orders refresh).
 		keep := slices.Clone(ids)
-		for _, o := range orders {
+		for _, o := range snap.Orders {
 			keep = append(keep, o.ItemID)
 		}
 		err = s.store.SavePrices(ctx, keep, prices, start)

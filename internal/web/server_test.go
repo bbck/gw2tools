@@ -23,6 +23,7 @@ type fakeAPI struct {
 	priceIDs   []int
 	ownedSkins []int
 	failPrices bool
+	delivery   []gw2.DeliveryItem
 }
 
 var (
@@ -57,6 +58,8 @@ func (f *fakeAPI) CurrentBuys(context.Context) ([]gw2.Transaction, error) {
 		{ID: 2, ItemID: 30, Price: 99, Quantity: 1},  // skin 3 already owned
 	}, nil
 }
+
+func (f *fakeAPI) Delivery(context.Context) ([]gw2.DeliveryItem, error) { return f.delivery, nil }
 
 func (f *fakeAPI) Prices(_ context.Context, ids []int) ([]gw2.Price, error) {
 	f.priceCalls++
@@ -352,5 +355,30 @@ func TestLimitSelectIncludesCurrent(t *testing.T) {
 	_, body = get(t, srv.Handler(), "/wardrobe")
 	if !strings.Contains(body, `<option value="25" selected>25</option>`) || strings.Count(body, "<option") != 4 {
 		t.Error("default limit options wrong")
+	}
+}
+
+func TestDeliveryBoxSection(t *testing.T) {
+	ctx := context.Background()
+	srv, api, _ := newTestServer(t, openStore(t, true))
+	api.delivery = []gw2.DeliveryItem{{ID: 20, Count: 1}} // bought the cheap helm
+	if err := srv.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The bought helm is not priced.
+	if len(api.priceIDs) != 0 {
+		t.Errorf("priced ids = %v, want none", api.priceIDs)
+	}
+	_, body := get(t, srv.Handler(), "/wardrobe")
+	box := strings.Index(body, "<h2>Delivery box</h2>")
+	cheapest := strings.Index(body, "Cheapest 25 missing")
+	if box < 0 || box > cheapest {
+		t.Fatal("delivery section should appear above the cheapest list")
+	}
+	if !strings.Contains(body[box:cheapest], "Cheap &lt;Helm&gt;") {
+		t.Error("delivery section should list the helm")
+	}
+	if strings.Contains(body[cheapest:], "Cheap &lt;Helm&gt;") {
+		t.Error("a bought skin should not be in the cheapest list")
 	}
 }

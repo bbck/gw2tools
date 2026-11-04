@@ -25,6 +25,22 @@
 {{with .View}}
 {{if .GWUTotal}}<p class="summary">Tradeable Guaranteed Wardrobe Unlock skins unlocked: <strong>{{.GWUOwned}}</strong> / {{.GWUTotal}}</p>{{end}}
 
+{{if .Delivery}}
+<h2>Delivery box</h2>
+<table>
+  <thead><tr><th>Skin</th><th>Item</th><th class="num">Qty</th></tr></thead>
+  <tbody>
+  {{range .Delivery}}
+  <tr>
+    <td>{{range $i, $s := .Skins}}{{if $i}}, {{end}}{{$s.Name}} <span class="type">{{$s.Type}}</span>{{end}}</td>
+    <td>{{.Item.Name}}</td>
+    <td class="num">{{.Count}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
 <h2>Cheapest {{.Limit}} missing GWU skins <span class="sub">total {{coins .CheapestCost}}</span></h2>
 {{if .Cheapest}}
 <table>
@@ -66,7 +82,7 @@
 {{else}}<p class="empty">None.</p>{{end}}
 
 {{if .Redundant}}
-<h2>Orders on skins already unlocked <span class="sub">consider cancelling</span></h2>
+<h2>Orders on skins already unlocked or bought <span class="sub">consider cancelling</span></h2>
 <table>
   <thead><tr><th>Item</th><th class="num">My bid</th><th class="num">Top bid</th><th>Status</th></tr></thead>
   <tbody>
