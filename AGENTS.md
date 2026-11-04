@@ -57,6 +57,7 @@ All tooling is pinned in `mise.toml`; use the tasks rather than calling tools di
 - `.github/workflows/ci.yaml` lints and tests every PR and push. It builds the image for `linux/amd64` and `linux/arm64`.
 - Pushes to `master` publish `ghcr.io/bbck/gw2tools:rolling` and `:sha-<commit>`, with a build provenance attestation.
 - The homelab pins `rolling@sha256:...`; Renovate opens a digest-update PR there when `rolling` moves.
+- Renovate (`.renovaterc.json5`) updates Go modules, the Go toolchain (grouped across `mise.toml`, `go.mod` and the Dockerfile), Dockerfile base images and Action pins. Non-major updates to 1.0+ dependencies automerge once CI passes.
 - The runtime image is `scratch`: the static binary, CA certificates, and an empty `/data` owned by 65534. Anything else the binary needs at runtime must be embedded or copied in explicitly.
 
 ## Rules
