@@ -1,0 +1,220 @@
+package gw2
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	c := New(srv.URL, "test-key")
+	c.MinInterval = 0
+	c.RetryBackoff = time.Millisecond
+	return c
+}
+
+func TestAccountSkinsSendsKey(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if r.URL.Path != "/v2/account/skins" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Write([]byte(`[1,2,3]`))
+	})
+	ids, err := c.AccountSkins(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("ids = %v", ids)
+	}
+}
+
+func TestAuthRequiresKey(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request should not be sent without a key")
+	})
+	c.APIKey = ""
+	if _, err := c.AccountSkins(context.Background()); err == nil {
+		t.Fatal("expected error without API key")
+	}
+}
+
+func TestCurrentBuysPaginates(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Page-Total", "2")
+		switch r.URL.Query().Get("page") {
+		case "0":
+			w.Write([]byte(`[{"id":1,"item_id":10,"price":100,"quantity":1,"created":"2026-01-01T00:00:00Z"}]`))
+		case "1":
+			w.Write([]byte(`[{"id":2,"item_id":11,"price":200,"quantity":2,"created":"2026-01-02T00:00:00Z"}]`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"text":"page out of range"}`))
+		}
+	})
+	orders, err := c.CurrentBuys(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orders) != 2 || orders[1].ItemID != 11 || orders[1].Quantity != 2 {
+		t.Fatalf("orders = %+v", orders)
+	}
+}
+
+func TestCurrentBuysEmpty(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Page-Total", "0")
+		w.Write([]byte(`[]`))
+	})
+	orders, err := c.CurrentBuys(context.Background())
+	if err != nil || len(orders) != 0 {
+		t.Fatalf("orders = %v, err = %v", orders, err)
+	}
+}
+
+func TestPricesBatchesAndSkipsInvalid(t *testing.T) {
+	var calls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		ids := strings.Split(r.URL.Query().Get("ids"), ",")
+		if len(ids) > MaxIDs {
+			t.Errorf("batch of %d ids", len(ids))
+		}
+		switch ids[0] {
+		case "1":
+			// Partial content: only some ids valid.
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write([]byte(`[{"id":1,"buys":{"quantity":5,"unit_price":10},"sells":{"quantity":3,"unit_price":20}}]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"text":"all ids provided are invalid"}`))
+		}
+	})
+	ids := make([]int, MaxIDs+5)
+	for i := range ids {
+		ids[i] = i + 1
+	}
+	prices, err := c.Prices(context.Background(), ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2", calls)
+	}
+	if len(prices) != 1 || prices[0].Buys.UnitPrice != 10 || prices[0].Sells.UnitPrice != 20 {
+		t.Fatalf("prices = %+v", prices)
+	}
+}
+
+func TestErrorText(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"text":"requires scope tradingpost"}`))
+	})
+	_, err := c.CurrentBuys(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "requires scope tradingpost") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestItemsDecodesSkins(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[
+			{"id":1,"name":"Sword","type":"Weapon","rarity":"Rare","default_skin":5232,"details":{"type":"Sword"}},
+			{"id":2,"name":"Unlock","type":"Consumable","rarity":"Exotic","details":{"type":"Transmutation","skins":[7,8]}}
+		]`))
+	})
+	items, err := c.Items(context.Background(), []int{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items[0].DefaultSkin != 5232 || len(items[1].Details.Skins) != 2 {
+		t.Fatalf("items = %+v", items)
+	}
+}
+
+func TestRetriesRateLimit(t *testing.T) {
+	var calls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"text":"too many requests"}`))
+			return
+		}
+		w.Write([]byte(`[1]`))
+	})
+	ids, err := c.CommerceItemIDs(context.Background())
+	if err != nil || len(ids) != 1 || calls != 3 {
+		t.Fatalf("ids = %v, err = %v, calls = %d", ids, err, calls)
+	}
+}
+
+func TestRateLimitGivesUp(t *testing.T) {
+	var calls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	if _, err := c.CommerceItemIDs(context.Background()); err == nil {
+		t.Fatal("expected error")
+	}
+	if calls != maxRetries+1 {
+		t.Errorf("calls = %d, want %d", calls, maxRetries+1)
+	}
+}
+
+func TestCurrentBuysEmptyOutOfRange(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"text":"page out of range. Use page values 0 - -1."}`))
+	})
+	orders, err := c.CurrentBuys(context.Background())
+	if err != nil || len(orders) != 0 {
+		t.Fatalf("orders = %v, err = %v", orders, err)
+	}
+}
+
+func TestBatchedOther404IsError(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`not found`))
+	})
+	if _, err := c.Prices(context.Background(), []int{1, 2}); err == nil {
+		t.Fatal("a 404 that isn't 'all ids invalid' should be an error")
+	}
+}
+
+func TestCurrentBuysPageVanishes(t *testing.T) {
+	// Orders closed while paging: page 1 is out of range by the time it's fetched.
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Page-Total", "2")
+		if r.URL.Query().Get("page") == "0" {
+			w.Write([]byte(`[{"id":1,"item_id":10,"price":100,"quantity":1,"created":"2026-01-01T00:00:00Z"}]`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"text":"page out of range. Use page values 0 - 0."}`))
+	})
+	orders, err := c.CurrentBuys(context.Background())
+	if err != nil || len(orders) != 1 {
+		t.Fatalf("orders = %v, err = %v", orders, err)
+	}
+}
+
+func TestRequests(t *testing.T) {
+	for n, want := range map[int]int{0: 0, 1: 1, MaxIDs: 1, MaxIDs + 1: 2} {
+		if got := Requests(n); got != want {
+			t.Errorf("Requests(%d) = %d, want %d", n, got, want)
+		}
+	}
+}

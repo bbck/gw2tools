@@ -1,0 +1,65 @@
+{
+  "iconHeight": 64,
+  "iconWidth": 64,
+  "images": [],
+  "items": [
+    {
+      "id": "armor",
+      "name": "Armor",
+      "unlockUrl": "https://api.guildwars2.com/v2/account/skins",
+      "categories": [
+        {
+          "name": "Heavy",
+          "groups": [
+            {
+              "groupName": "Helm",
+              "content": [
+                {"id": "100", "name": "Test Helm", "type": "Helm", "rarity": "Rare", "sources": ["tp", "gwu"]},
+                {"id": "101", "name": "Gem Helm", "type": "Helm", "rarity": "Exotic", "sources": ["gem"]}
+              ]
+            }
+          ]
+        }
+      ],
+      "groups": []
+    },
+    {
+      "id": "weapon",
+      "name": "Weapon",
+      "unlockUrl": "https://api.guildwars2.com/v2/account/skins",
+      "categories": [
+        {
+          "name": "Sword",
+          "groups": [
+            {
+              "groupName": "Sword",
+              "content": [
+                {"id": "200", "name": "Test Sword", "type": "Sword", "rarity": "Masterwork", "sources": ["craft", "gwu"]}
+              ]
+            }
+          ]
+        }
+      ],
+      "groups": []
+    },
+    {
+      "id": "mini",
+      "name": "Minis",
+      "unlockUrl": "https://api.guildwars2.com/v2/account/minis",
+      "categories": [
+        {
+          "name": "Minis",
+          "groups": [
+            {
+              "groupName": "Minis",
+              "content": [
+                {"id": "300", "name": "Mini Test", "rarity": "Rare", "sources": ["gwu"]}
+              ]
+            }
+          ]
+        }
+      ],
+      "groups": []
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{{template "head" .}}
+{{$now := .Now}}
+<section class="toolbar">
+  <h1>Wardrobe buy orders</h1>
+  <div class="meta">
+    <span>Orders updated <time datetime="{{datetime .View.OrdersAt}}">{{ago .View.OrdersAt $now}}</time></span>
+    <span>{{if .Pricing}}<span class="badge tied">Updating prices…</span>{{else}}Prices updated <time datetime="{{datetime .View.PricesAt}}">{{ago .View.PricesAt $now}}</time>, next {{until .NextPrices $now}}{{end}}</span>
+    <form method="get" action="/wardrobe">
+      <label>Show
+        <select name="n" class="autosubmit">
+          {{range .Limits}}<option value="{{.}}"{{if eq . $.View.Limit}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </label>
+      <noscript><button type="submit">Go</button></noscript>
+    </form>
+  </div>
+</section>
+
+{{if not .Seeded}}
+<p class="banner error">No skin catalogue yet. Run <code>mise run seed</code> (or <code>gw2tools seed</code>) to load it.</p>
+{{end}}
+{{with .Errors.Orders}}<p class="banner error">Last orders refresh failed: {{.}}</p>{{end}}
+{{with .Errors.Prices}}<p class="banner error">Last prices refresh failed: {{.}}</p>{{end}}
+
+{{with .View}}
+{{if .GWUTotal}}<p class="summary">Tradeable Guaranteed Wardrobe Unlock skins unlocked: <strong>{{.GWUOwned}}</strong> / {{.GWUTotal}}</p>{{end}}
+
+<h2>Cheapest {{.Limit}} missing GWU skins <span class="sub">total {{coins .CheapestCost}}</span></h2>
+{{if .Cheapest}}
+<table>
+  <thead><tr><th class="num">#</th><th>Skin</th><th>Cheapest item</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>My order</th><th>Status</th></tr></thead>
+  <tbody>
+  {{range .Cheapest}}{{$row := .}}
+  <tr class="row-{{.Status.Class}}">
+    <td class="num">{{.Rank}}</td>
+    <td>{{.Skin.Name}} <span class="type">{{.Skin.Type}}</span></td>
+    <td>{{template "item" .Item}}</td>
+    <td class="num">{{coins .Price.BuyPrice}}</td>
+    <td class="num">{{coins .Price.SellPrice}}</td>
+    <td>{{range .Orders}}<div>{{template "bid" .}}{{if ne .Item.ID $row.Item.ID}} <span class="type">on {{template "item" .Item}}</span>{{end}}</div>{{else}}<span class="none">—</span>{{end}}</td>
+    <td>{{if .Orders}}{{range .Orders}}<div>{{template "status" .}}</div>{{end}}{{else}}<span class="badge none">No order</span>{{with .SuggestedBid}} <span class="detail">bid {{coins .}}</span>{{end}}{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}<p class="empty">Nothing to show yet.</p>{{end}}
+
+<h2>Other orders on missing skins <span class="sub">outside the cheapest {{.Limit}}, total {{coins .OthersCost}}</span></h2>
+{{if .Others}}
+<table>
+  <thead><tr><th>Skin</th><th>GWU</th><th>Order item</th><th class="num">My bid</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>Status</th></tr></thead>
+  <tbody>
+  {{range .Others}}{{$row := .}}{{range .Orders}}
+  <tr class="row-{{.Status.Class}}">
+    <td>{{$row.Skin.Name}} <span class="type">{{$row.Skin.Type}}</span></td>
+    <td>{{if $row.Skin.GWU}}✓{{end}}</td>
+    <td>{{template "item" .Item}}</td>
+    <td class="num">{{template "bid" .}}</td>
+    <td class="num">{{coins .Market.BuyPrice}}</td>
+    <td class="num">{{coins .Market.SellPrice}}</td>
+    <td>{{template "status" .}}</td>
+  </tr>
+  {{end}}{{end}}
+  </tbody>
+</table>
+{{else}}<p class="empty">None.</p>{{end}}
+
+{{if .Redundant}}
+<h2>Orders on skins already unlocked <span class="sub">consider cancelling</span></h2>
+<table>
+  <thead><tr><th>Item</th><th class="num">My bid</th><th class="num">Top bid</th><th>Status</th></tr></thead>
+  <tbody>
+  {{range .Redundant}}
+  <tr>
+    <td>{{template "item" .Item}}</td>
+    <td class="num">{{template "bid" .}}</td>
+    <td class="num">{{coins .Market.BuyPrice}}</td>
+    <td>{{template "status" .}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{if .OtherOrders}}<p class="footnote">{{.OtherOrders}} buy order(s) on items that don't unlock a skin are hidden.</p>{{end}}
+{{end}}
+{{template "foot" .}}

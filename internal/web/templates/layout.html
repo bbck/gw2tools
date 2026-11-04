@@ -1,0 +1,32 @@
+{{define "head"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta http-equiv="refresh" content="60">
+<title>{{.Title}} · gw2tools</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header>
+  <a class="brand" href="/">gw2tools</a>
+  <nav><a href="/wardrobe" class="active">Wardrobe Unlocks</a></nav>
+</header>
+<main>
+{{end}}
+
+{{define "foot"}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "item"}}<span class="item">{{.Name}}</span> <button type="button" class="copy" data-copy="{{.Name}}" title="Copy name for trading post search">⧉</button>{{end}}
+
+{{/* An order's standing. SuggestedBid is set when outbid or tied, OutbidBy only when outbid. */}}
+{{define "status"}}<span class="badge {{.Status.Class}}">{{.Status}}</span>{{if .SuggestedBid}} <span class="detail">{{if .OutbidBy}}by {{coins .OutbidBy}}, {{end}}bid {{coins .SuggestedBid}}</span>{{end}}{{end}}
+
+{{/* Our bid on an order: unit price and quantity. */}}
+{{define "bid"}}{{coins .Order.Price}} ×{{.Quantity}}{{end}}

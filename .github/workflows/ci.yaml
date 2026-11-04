@@ -1,0 +1,104 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: CI
+
+# Pull requests are tested and built; pushes to master also publish
+# ghcr.io/bbck/gw2tools:rolling (and :sha-<commit>). The homelab pins
+# rolling@sha256:..., and Renovate opens a digest update when rolling moves.
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Mise
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+
+      - name: Lint
+        run: mise run lint
+
+      - name: Test
+        run: mise run test
+
+  image:
+    name: Image
+    needs:
+      - test
+    runs-on: ubuntu-26.04
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image Metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          flavor: latest=false
+          images: ghcr.io/${{ github.repository_owner }}/gw2tools
+          tags: |
+            type=raw,value=rolling
+            type=sha,format=long
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GitHub Container Registry
+        if: ${{ env.PUBLISH == 'true' }}
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+
+      - name: Attestation
+        if: ${{ env.PUBLISH == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          push-to-registry: true
+          subject-name: ghcr.io/${{ github.repository_owner }}/gw2tools
+          subject-digest: ${{ steps.build.outputs.digest }}
+
+      - name: Summary
+        if: ${{ env.PUBLISH == 'true' }}
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/gw2tools
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "${IMAGE}:rolling@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"

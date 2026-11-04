@@ -1,0 +1,37 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+
+min_version = "2025.1.0"
+
+[tools]
+go = "1.27.2"
+
+[env]
+GW2TOOLS_DB = "{{ config_root }}/data/gw2tools.db"
+GW2TOOLS_LISTEN = "127.0.0.1:8080"
+
+[tasks.test]
+description = "Run the test suite"
+run = "go test ./..."
+
+[tasks.lint]
+description = "Check formatting and vet"
+run = ['test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }', "go vet ./..."]
+
+[tasks.build]
+description = "Build the gw2tools binary into bin/"
+run = "CGO_ENABLED=0 go build -trimpath -o bin/gw2tools ."
+
+[tasks.dev]
+description = "Run the server locally on http://127.0.0.1:8080 with the API key from 1Password"
+run = "op run -- go run . serve"
+
+[tasks.dev.env]
+GW2_API_KEY = "op://Homelab/gw2tools/GW2_API_KEY"
+
+[tasks.seed]
+description = "Load the skin catalogue (bulk GW2 API fetch, ~150 requests); run by hand only"
+run = "go run . seed"
+
+[tasks.docker-build]
+description = "Build the container image locally"
+run = "docker build -t gw2tools:dev ."

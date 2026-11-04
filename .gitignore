@@ -1,0 +1,6 @@
+/bin/
+/gw2tools
+/data/
+*.db
+*.db-shm
+*.db-wal
