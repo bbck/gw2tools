@@ -22,6 +22,7 @@ import (
 	"github.com/bbck/gw2tools/internal/seed"
 	"github.com/bbck/gw2tools/internal/store"
 	"github.com/bbck/gw2tools/internal/web"
+	"github.com/bbck/gw2tools/internal/wiki"
 )
 
 func main() {
@@ -73,6 +74,7 @@ func serve(ctx context.Context, log *slog.Logger, args []string) error {
 	db, apiURL := commonFlags(fs)
 	addr := fs.String("listen", env("GW2TOOLS_LISTEN", ":8080"), "listen address (GW2TOOLS_LISTEN)")
 	ordersEvery := fs.Duration("orders-interval", durEnv("GW2TOOLS_ORDERS_INTERVAL", web.MinOrdersInterval), "how often to refresh unlocks and buy orders, at least 1m (GW2TOOLS_ORDERS_INTERVAL)")
+	wikiURL := fs.String("wiki-url", env("GW2TOOLS_WIKI_URL", wiki.DefaultBaseURL), "GW2 wiki base URL, checked daily after midnight UTC for the Black Lion Chest sets (GW2TOOLS_WIKI_URL)")
 	pricesEvery := fs.Duration("prices-interval", durEnv("GW2TOOLS_PRICES_INTERVAL", web.MinPricesInterval), "how often to refresh candidate item prices, at least 1h (GW2TOOLS_PRICES_INTERVAL)")
 	fs.Parse(args)
 
@@ -86,7 +88,7 @@ func serve(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 	defer st.Close()
 
-	srv, err := web.New(st, gw2.New(*apiURL, key), log, web.Intervals{Orders: *ordersEvery, Prices: *pricesEvery})
+	srv, err := web.New(st, gw2.New(*apiURL, key), wiki.New(*wikiURL), log, web.Intervals{Orders: *ordersEvery, Prices: *pricesEvery})
 	if err != nil {
 		return err
 	}

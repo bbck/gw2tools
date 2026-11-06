@@ -3,7 +3,6 @@ package wardrobe
 import (
 	"cmp"
 	"slices"
-	"time"
 )
 
 // Status is where one of our buy orders stands against the order book.
@@ -52,7 +51,7 @@ type OrderRow struct {
 type Row struct {
 	Rank int // position in the cheapest list, 0 when not in it
 	Skin Skin
-	// Item is the cheapest tradeable item that unlocks the skin.
+	// Item is the cheapest priced item that unlocks the skin, else any item for it.
 	Item  Item
 	Price Price
 	// Cost is what the skin costs: the top buy order, or the lowest sell listing if
@@ -74,9 +73,7 @@ type DeliveryRow struct {
 }
 
 type View struct {
-	OrdersAt time.Time
-	PricesAt time.Time
-	Limit    int
+	Limit int
 	// Delivery are delivery box items that unlock a locked GWU skin, by skin name.
 	Delivery []DeliveryRow
 	// Cheapest is the Limit cheapest unowned Guaranteed Wardrobe Unlock skins.
@@ -99,40 +96,13 @@ type View struct {
 
 // BuildView combines the catalogue and the latest snapshot into the wardrobe page.
 func BuildView(c Catalog, snap Snapshot, limit int) View {
-	v := View{OrdersAt: snap.OrdersAt, PricesAt: snap.PricesAt, Limit: limit}
+	v := View{Limit: limit}
 	skinItems := c.skinItems()
 	locked, delivery := c.locked(snap)
 	v.Delivery = delivery
 
-	// Quantity we are bidding per item and price, to tell "top" from "tied".
-	type itemPrice struct{ item, price int }
-	ourQty := map[itemPrice]int{}
-	for _, o := range snap.Orders {
-		ourQty[itemPrice{o.ItemID, o.Price}] += o.Quantity
-	}
-
-	ordersBySkin := map[int][]OrderRow{}
-	for _, o := range snap.Orders {
-		it, ok := c.Items[o.ItemID]
-		if !ok {
-			v.OtherOrders++
-			continue
-		}
-		or := orderRow(o, it, snap.Prices, ourQty[itemPrice{o.ItemID, o.Price}])
-		var wanted []int
-		for _, s := range it.Skins {
-			if _, known := c.Skins[s]; known && locked(s) {
-				wanted = append(wanted, s)
-			}
-		}
-		if len(wanted) == 0 {
-			v.Redundant = append(v.Redundant, or)
-			continue
-		}
-		for _, s := range wanted {
-			ordersBySkin[s] = append(ordersBySkin[s], or)
-		}
-	}
+	var ordersBySkin map[int][]OrderRow
+	ordersBySkin, v.Redundant, v.OtherOrders = groupOrders(c, snap, locked)
 
 	var candidates []Row
 	for _, sk := range c.Skins {
@@ -176,11 +146,45 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 	slices.SortFunc(v.Others, func(a, b Row) int {
 		return cmp.Or(cmp.Compare(attention(a.Status), attention(b.Status)), byCost(a, b))
 	})
+	return v
+}
 
-	slices.SortFunc(v.Redundant, func(a, b OrderRow) int {
+// groupOrders rates our orders and groups them by the locked skins their items
+// unlock. redundant are orders whose skins are all unlocked or bought; other counts
+// orders on items that unlock no skin.
+func groupOrders(c Catalog, snap Snapshot, locked func(int) bool) (bySkin map[int][]OrderRow, redundant []OrderRow, other int) {
+	// Quantity we are bidding per item and price, to tell "top" from "tied".
+	type itemPrice struct{ item, price int }
+	ourQty := map[itemPrice]int{}
+	for _, o := range snap.Orders {
+		ourQty[itemPrice{o.ItemID, o.Price}] += o.Quantity
+	}
+	bySkin = map[int][]OrderRow{}
+	for _, o := range snap.Orders {
+		it, ok := c.Items[o.ItemID]
+		if !ok {
+			other++
+			continue
+		}
+		or := orderRow(o, it, snap.Prices, ourQty[itemPrice{o.ItemID, o.Price}])
+		var wanted []int
+		for _, s := range it.Skins {
+			if _, known := c.Skins[s]; known && locked(s) {
+				wanted = append(wanted, s)
+			}
+		}
+		if len(wanted) == 0 {
+			redundant = append(redundant, or)
+			continue
+		}
+		for _, s := range wanted {
+			bySkin[s] = append(bySkin[s], or)
+		}
+	}
+	slices.SortFunc(redundant, func(a, b OrderRow) int {
 		return cmp.Or(cmp.Compare(a.Item.Name, b.Item.Name), cmp.Compare(a.ID, b.ID))
 	})
-	return v
+	return bySkin, redundant, other
 }
 
 // locked reports which skins the account still needs: not unlocked, and not bought.
@@ -220,9 +224,9 @@ func byCost(a, b Row) int {
 }
 
 // skinRow picks the cheapest priced item for the skin. ok is false when no item
-// has any buy orders or sell listings.
+// has any buy orders or sell listings; Item is then the lowest-id item, if any.
 func skinRow(sk Skin, itemIDs []int, c Catalog, prices map[int]Price, orders []OrderRow) (Row, bool) {
-	r := Row{Skin: sk, Orders: orders}
+	r := Row{Skin: sk, Orders: orders, Status: mostUrgent(orders)}
 	found := false
 	for _, id := range itemIDs {
 		p, ok := prices[id]
@@ -238,15 +242,25 @@ func skinRow(sk Skin, itemIDs []int, c Catalog, prices map[int]Price, orders []O
 			r.Item, r.Price, r.Cost, found = it, p, cost, true
 		}
 	}
+	if !found && len(itemIDs) > 0 {
+		r.Item = c.Items[slices.Min(itemIDs)] // still searchable on the trading post
+	}
 	if found && r.Price.BuyPrice > 0 {
 		r.SuggestedBid = r.Price.BuyPrice + 1
 	}
+	return r, found
+}
+
+// mostUrgent is the status of whichever order needs action soonest, StatusNoOrder
+// when there are none.
+func mostUrgent(orders []OrderRow) Status {
+	s := StatusNoOrder
 	for i, o := range orders {
-		if i == 0 || attention(o.Status) < attention(r.Status) {
-			r.Status = o.Status
+		if i == 0 || attention(o.Status) < attention(s) {
+			s = o.Status
 		}
 	}
-	return r, found
+	return s
 }
 
 func orderRow(o Order, it Item, prices map[int]Price, ourQtyAtPrice int) OrderRow {

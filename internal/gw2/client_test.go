@@ -246,3 +246,44 @@ func TestNonJSONErrorIsSummarised(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestAchievementsAndSkins(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("%s sent the API key", r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v2/achievements/categories/76":
+			w.Write([]byte(`{"id":76,"name":"Black Lion Collections","achievements":[1732,5066]}`))
+		case "/v2/achievements":
+			if got := r.URL.Query().Get("ids"); got != "1732,5066" {
+				t.Errorf("achievement ids = %q", got)
+			}
+			w.Write([]byte(`[{"id":1732,"name":"Chaos Weapon Collection","bits":[{"type":"Skin","id":4672},{"type":"Skin","id":4673}]},
+				{"id":5066,"name":"Skyscale Toy Training","bits":[{"type":"Item","id":12}]}]`))
+		case "/v2/skins":
+			w.Write([]byte(`[{"id":4672,"name":"Chaos Longbow","type":"Weapon","rarity":"Exotic","details":{"type":"LongBow"}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	ctx := context.Background()
+	ids, err := c.AchievementCategory(ctx, 76)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("category = %v, %v", ids, err)
+	}
+	as, err := c.Achievements(ctx, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(as) != 2 || as[0].Name != "Chaos Weapon Collection" || len(as[0].Bits) != 2 || as[0].Bits[1] != (AchievementBit{Type: "Skin", ID: 4673}) {
+		t.Fatalf("achievements = %+v", as)
+	}
+	skins, err := c.Skins(ctx, []int{4672})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skins) != 1 || skins[0].Type != "Weapon" || skins[0].Details.Type != "LongBow" {
+		t.Fatalf("skins = %+v", skins)
+	}
+}

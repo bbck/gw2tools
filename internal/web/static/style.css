@@ -3,6 +3,7 @@
   --bg: #121417;
   --panel: #1b1e23;
   --border: #2c3139;
+  --hover: #22262c;
   --text: #d8dce2;
   --muted: #8a919c;
   --accent: #c9a35a;
@@ -79,11 +80,12 @@ code { background: #262a31; padding: 0.05rem 0.3rem; border-radius: 3px; }
 table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); }
 th, td { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
-tbody tr:hover { background: #22262c; }
-td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-tr.row-outbid td:first-child { box-shadow: inset 3px 0 var(--outbid); }
-tr.row-tied td:first-child { box-shadow: inset 3px 0 var(--tied); }
-tr.row-top td:first-child { box-shadow: inset 3px 0 var(--top); }
+tbody tr:hover { background: var(--hover); }
+.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Status stripe on table rows and set rows. */
+tr.row-outbid td:first-child, .set-row.row-outbid { box-shadow: inset 3px 0 var(--outbid); }
+tr.row-tied td:first-child, .set-row.row-tied { box-shadow: inset 3px 0 var(--tied); }
+tr.row-top td:first-child, .set-row.row-top { box-shadow: inset 3px 0 var(--top); }
 
 .type { color: var(--muted); font-size: 0.85rem; }
 .detail { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
@@ -109,3 +111,27 @@ tr.row-top td:first-child { box-shadow: inset 3px 0 var(--top); }
 .coins .g { color: var(--gold); }
 .coins .s { color: var(--silver); }
 .coins .c { color: var(--copper); }
+
+/* Black Lion sets: one expandable row per set. */
+.sets { background: var(--panel); border: 1px solid var(--border); }
+.set-head, .set-row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) 9rem 16rem 14rem;
+  gap: 0 1rem;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.set-head { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.set-row .name::before { content: ""; display: inline-block; width: 1.1rem; color: var(--muted); }
+summary.set-row { cursor: pointer; list-style: none; }
+summary.set-row::-webkit-details-marker { display: none; }
+summary.set-row:hover { background: var(--hover); }
+summary.set-row .name::before { content: "▸"; }
+details[open] > summary.set-row .name::before { content: "▾"; }
+details[open] > summary.set-row { background: var(--hover); }
+.set-row.complete .name { color: var(--muted); }
+details.set > table { border: 0; border-bottom: 1px solid var(--border); background: var(--bg); }
+details.set > table th:first-child, details.set > table td:first-child { padding-left: 1.7rem; }
+.warn { color: var(--tied); cursor: help; }
+img.chest { width: 1.35em; height: 1.35em; vertical-align: -0.3em; margin-left: 0.3rem; cursor: help; }

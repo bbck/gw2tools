@@ -36,6 +36,11 @@ const (
 	MinPricesInterval = time.Hour
 )
 
+// ChestSource names the weapon sets in the current Black Lion Chest.
+type ChestSource interface {
+	ChestSets(ctx context.Context) ([]string, error)
+}
+
 // Intervals are how often each refresh runs. Values below the minimums are raised.
 type Intervals struct {
 	Orders time.Duration
@@ -49,6 +54,7 @@ func (i Intervals) clamp() Intervals {
 type Server struct {
 	store     *store.Store
 	api       wardrobe.API
+	chest     ChestSource
 	log       *slog.Logger
 	tmpl      *template.Template
 	now       func() time.Time
@@ -62,12 +68,12 @@ type Server struct {
 	catalogSeed time.Time
 }
 
-func New(st *store.Store, api wardrobe.API, log *slog.Logger, iv Intervals) (*Server, error) {
+func New(st *store.Store, api wardrobe.API, chest ChestSource, log *slog.Logger, iv Intervals) (*Server, error) {
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: st, api: api, log: log, tmpl: tmpl, now: time.Now, intervals: iv.clamp()}, nil
+	return &Server{store: st, api: api, chest: chest, log: log, tmpl: tmpl, now: time.Now, intervals: iv.clamp()}, nil
 }
 
 func (s *Server) Intervals() Intervals { return s.intervals }
@@ -81,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 		http.Redirect(w, r, "/wardrobe", http.StatusFound)
 	})
 	mux.HandleFunc("GET /wardrobe", s.wardrobe)
+	mux.HandleFunc("GET /black-lion", s.sets)
 	return mux
 }
 
@@ -101,8 +108,9 @@ func (s *Server) RunScheduler(ctx context.Context) {
 }
 
 // Tick refreshes orders, then prices if the last prices refresh attempt, successful
-// or not, is at least the prices interval old. Attempts are stored, so restarts do
-// not cause extra price refreshes.
+// or not, is at least the prices interval old, then the Black Lion Chest sets if they
+// were last attempted before the latest midnight UTC. Attempts are stored, so restarts
+// do not cause extra refreshes.
 func (s *Server) Tick(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -116,13 +124,13 @@ func (s *Server) Tick(ctx context.Context) error {
 		return nil
 	}
 	u, ordersErr := s.refreshOrders(ctx, cat)
+	return errors.Join(ordersErr, s.maybeRefreshPrices(ctx, cat, u, ordersErr), s.maybeRefreshChest(ctx))
+}
 
+func (s *Server) maybeRefreshPrices(ctx context.Context, cat wardrobe.Catalog, u wardrobe.OrdersUpdate, ordersErr error) error {
 	tried, err := s.store.PricesAttemptedAt(ctx)
-	if err != nil {
-		return errors.Join(ordersErr, err)
-	}
-	if s.now().Sub(tried) < s.intervals.Prices {
-		return ordersErr
+	if err != nil || s.now().Sub(tried) < s.intervals.Prices {
+		return err
 	}
 	snap := wardrobe.Snapshot{Owned: map[int]bool{}, Orders: u.Orders, Delivery: u.Delivery}
 	for _, id := range u.Owned {
@@ -131,10 +139,35 @@ func (s *Server) Tick(ctx context.Context) error {
 	if ordersErr != nil {
 		// Fall back to the stored account state.
 		if snap, err = s.store.LoadSnapshot(ctx); err != nil {
-			return errors.Join(ordersErr, err)
+			return err
 		}
 	}
-	return errors.Join(ordersErr, s.refreshPrices(ctx, cat, snap))
+	return s.refreshPrices(ctx, cat, snap)
+}
+
+// maybeRefreshChest asks the wiki which weapon sets are in the Black Lion Chest, once
+// a day: on the first tick after midnight UTC, which leaves the wiki time to catch up
+// with a game update. A server that was down at midnight checks when it starts.
+func (s *Server) maybeRefreshChest(ctx context.Context) error {
+	tried, err := s.store.ChestAttemptedAt(ctx)
+	if err != nil || !tried.Before(lastMidnightUTC(s.now())) {
+		return err
+	}
+	start := s.now()
+	// Recorded before the request, so a failing check waits a full interval.
+	if err := s.store.SetChestAttempt(ctx, start); err != nil {
+		return fmt.Errorf("chest: recording attempt: %w", err)
+	}
+	sets, err := s.chest.ChestSets(ctx)
+	if err == nil {
+		err = s.store.SaveChestSets(ctx, sets)
+	}
+	if err != nil {
+		s.recordError(ctx, s.store.SetChestError, err)
+		return fmt.Errorf("chest: %w", err)
+	}
+	s.log.Info("checked black lion chest", "sets", sets)
+	return nil
 }
 
 func (s *Server) refreshOrders(ctx context.Context, cat wardrobe.Catalog) (wardrobe.OrdersUpdate, error) {
@@ -206,59 +239,95 @@ func (s *Server) loadCatalog(ctx context.Context) (wardrobe.Catalog, time.Time, 
 	return s.catalog, seeded, nil
 }
 
-type wardrobePage struct {
-	View       wardrobe.View
+// navLinks are the pages, in nav order. Each page's title is its label.
+var navLinks = []struct{ Path, Label string }{
+	{"/wardrobe", "Wardrobe Unlocks"},
+	{"/black-lion", "Black Lion Sets"},
+}
+
+// pageState is what every page's layout, toolbar and banners show.
+type pageState struct {
+	Path       string
+	Title      string
+	OrdersAt   time.Time // last orders refresh
+	PricesAt   time.Time // start of the last successful prices refresh
 	Seeded     bool
 	Pricing    bool
 	Errors     store.Errors
 	Now        time.Time
 	NextPrices time.Time
-	Limits     []int
 }
 
-func (wardrobePage) Title() string { return "Wardrobe Unlocks" }
+// load reads the catalogue, the stored snapshot and the state for the page at r's path.
+func (s *Server) load(r *http.Request) (wardrobe.Catalog, wardrobe.Snapshot, pageState, error) {
+	ctx := r.Context()
+	ps := pageState{Path: r.URL.Path}
+	for _, l := range navLinks {
+		if l.Path == ps.Path {
+			ps.Title = l.Label
+		}
+	}
+	cat, seeded, err := s.loadCatalog(ctx)
+	if err != nil {
+		return cat, wardrobe.Snapshot{}, ps, err
+	}
+	snap, err := s.store.LoadSnapshot(ctx)
+	if err != nil {
+		return cat, snap, ps, err
+	}
+	if ps.Errors, err = s.store.Errors(ctx); err != nil {
+		return cat, snap, ps, err
+	}
+	tried, err := s.store.PricesAttemptedAt(ctx)
+	if err != nil {
+		return cat, snap, ps, err
+	}
+	ps.OrdersAt, ps.PricesAt = snap.OrdersAt, snap.PricesAt
+	ps.Seeded, ps.Pricing, ps.Now = !seeded.IsZero(), s.pricing.Load(), s.now()
+	if !tried.IsZero() {
+		ps.NextPrices = tried.Add(s.intervals.Prices)
+	}
+	return cat, snap, ps, nil
+}
+
+func (s *Server) render(w http.ResponseWriter, name string, page any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, name, page); err != nil {
+		s.log.Error("rendering page", "template", name, "err", err)
+	}
+}
+
+type wardrobePage struct {
+	pageState
+	View   wardrobe.View
+	Limits []int
+}
 
 func (s *Server) wardrobe(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	limit := defaultLimit
 	if n, err := strconv.Atoi(r.URL.Query().Get("n")); err == nil && n > 0 {
 		limit = min(n, maxLimit)
 	}
-	cat, seeded, err := s.loadCatalog(ctx)
+	cat, snap, ps, err := s.load(r)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	snap, err := s.store.LoadSnapshot(ctx)
+	s.render(w, "wardrobe.html", wardrobePage{pageState: ps, View: wardrobe.BuildView(cat, snap, limit), Limits: limitOptions(limit)})
+}
+
+type setsPage struct {
+	pageState
+	View wardrobe.SetsView
+}
+
+func (s *Server) sets(w http.ResponseWriter, r *http.Request) {
+	cat, snap, ps, err := s.load(r)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	errs, err := s.store.Errors(ctx)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	tried, err := s.store.PricesAttemptedAt(ctx)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	page := wardrobePage{
-		View:    wardrobe.BuildView(cat, snap, limit),
-		Seeded:  !seeded.IsZero(),
-		Pricing: s.pricing.Load(),
-		Errors:  errs,
-		Now:     s.now(),
-		Limits:  limitOptions(limit),
-	}
-	if !tried.IsZero() {
-		page.NextPrices = tried.Add(s.intervals.Prices)
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "wardrobe.html", page); err != nil {
-		s.log.Error("rendering wardrobe", "err", err)
-	}
+	s.render(w, "sets.html", setsPage{pageState: ps, View: wardrobe.BuildSets(cat, snap)})
 }
 
 // limitOptions are the "Show" choices, including the current limit so the select
@@ -277,7 +346,13 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
+func lastMidnightUTC(t time.Time) time.Time {
+	y, m, d := t.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
 var funcs = template.FuncMap{
+	"nav":      func() any { return navLinks },
 	"coins":    coins,
 	"ago":      ago,
 	"until":    until,

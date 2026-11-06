@@ -26,6 +26,7 @@ func TestServeStopsCleanly(t *testing.T) {
 			"-db", filepath.Join(t.TempDir(), "serve.db"),
 			"-listen", "127.0.0.1:0",
 			"-api-url", api.URL,
+			"-wiki-url", api.URL,
 		})
 	}()
 	time.Sleep(100 * time.Millisecond)

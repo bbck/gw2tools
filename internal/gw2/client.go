@@ -161,6 +161,49 @@ func (c *Client) Delivery(ctx context.Context) ([]DeliveryItem, error) {
 	return d.Items, err
 }
 
+// Achievement is an achievement and its bits (the steps of a collection).
+type Achievement struct {
+	ID   int              `json:"id"`
+	Name string           `json:"name"`
+	Bits []AchievementBit `json:"bits"`
+}
+
+// AchievementBit is one step of an achievement. For Type "Skin", ID is a skin id.
+type AchievementBit struct {
+	Type string `json:"type"`
+	ID   int    `json:"id"`
+}
+
+// Skin is a wardrobe skin from /v2/skins.
+type Skin struct {
+	ID      int    `json:"id"`
+	Name    string `json:"name"`
+	Type    string `json:"type"` // Armor, Weapon, Back, ...
+	Rarity  string `json:"rarity"`
+	Details struct {
+		Type string `json:"type"` // e.g. Sword, LongBow, Coat
+	} `json:"details"`
+}
+
+// AchievementCategory returns the ids of the achievements in a category.
+func (c *Client) AchievementCategory(ctx context.Context, id int) ([]int, error) {
+	var cat struct {
+		Achievements []int `json:"achievements"`
+	}
+	_, err := c.get(ctx, "/v2/achievements/categories/"+strconv.Itoa(id), nil, false, &cat)
+	return cat.Achievements, err
+}
+
+// Achievements returns achievement details. Ids the API does not know are skipped.
+func (c *Client) Achievements(ctx context.Context, ids []int) ([]Achievement, error) {
+	return getBatched[Achievement](ctx, c, "/v2/achievements", ids)
+}
+
+// Skins returns skin details. Ids the API does not know are skipped.
+func (c *Client) Skins(ctx context.Context, ids []int) ([]Skin, error) {
+	return getBatched[Skin](ctx, c, "/v2/skins", ids)
+}
+
 // CommerceItemIDs returns the ids of every item that can be traded on the trading post.
 func (c *Client) CommerceItemIDs(ctx context.Context) ([]int, error) {
 	var ids []int

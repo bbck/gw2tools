@@ -29,6 +29,9 @@ const (
 	metaPricesTried = "prices_attempted_at"
 	metaOrdersError = "orders_error"
 	metaPricesError = "prices_error"
+	metaChestSets   = "chest_sets" // JSON list of set names
+	metaChestTried  = "chest_attempted_at"
+	metaChestError  = "chest_error"
 	upsertMetaSQL   = "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value"
 	upsertPriceSQL  = `INSERT INTO prices
 		(item_id, buy_price, buy_quantity, sell_price, sell_quantity, top_buy_quantity, updated_at)
@@ -105,10 +108,10 @@ func migrate(db *sql.DB) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// ReplaceCatalog swaps the seeded skins and items for a new set.
+// ReplaceCatalog swaps the seeded catalogue (skins, items and weapon sets) for a new one.
 func (s *Store) ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		for _, q := range []string{"DELETE FROM item_skins", "DELETE FROM items", "DELETE FROM skins"} {
+		for _, q := range []string{"DELETE FROM weapon_set_skins", "DELETE FROM weapon_sets", "DELETE FROM item_skins", "DELETE FROM items", "DELETE FROM skins"} {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				return err
 			}
@@ -140,11 +143,36 @@ func (s *Store) ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error {
 				}
 			}
 		}
+		setStmt, err := tx.PrepareContext(ctx, "INSERT INTO weapon_sets (id, name) VALUES (?, ?)")
+		if err != nil {
+			return err
+		}
+		setSkinStmt, err := tx.PrepareContext(ctx, "INSERT INTO weapon_set_skins (set_id, skin_id) VALUES (?, ?)")
+		if err != nil {
+			return err
+		}
+		for _, set := range c.Sets {
+			if _, err := setStmt.ExecContext(ctx, set.ID, set.Name); err != nil {
+				return err
+			}
+			for _, sk := range set.Skins {
+				if _, err := setSkinStmt.ExecContext(ctx, set.ID, sk); err != nil {
+					return fmt.Errorf("adding skin %d to set %q: %w", sk, set.Name, err)
+				}
+			}
+		}
 		return setMetaTime(ctx, tx, metaSeededAt, time.Now())
 	})
 }
 
-// LoadCatalog reads the seeded skins and items.
+// WeaponSetCount is the number of stored Black Lion weapon sets.
+func (s *Store) WeaponSetCount(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM weapon_sets").Scan(&n)
+	return n, err
+}
+
+// LoadCatalog reads the seeded skins, items and weapon sets.
 func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
 	c := wardrobe.Catalog{Skins: map[int]wardrobe.Skin{}, Items: map[int]wardrobe.Item{}}
 	err := each(ctx, s.db, "SELECT id, name, section, type, rarity, gwu FROM skins", nil, func(rows *sql.Rows) error {
@@ -177,6 +205,24 @@ func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
 		it := c.Items[itemID]
 		it.Skins = append(it.Skins, skinID)
 		c.Items[itemID] = it
+		return nil
+	})
+	if err != nil {
+		return c, err
+	}
+	err = each(ctx, s.db, `SELECT ws.id, ws.name, wss.skin_id FROM weapon_sets ws
+		JOIN weapon_set_skins wss ON wss.set_id = ws.id
+		ORDER BY ws.name, ws.id, wss.skin_id`, nil, func(rows *sql.Rows) error {
+		var id, skinID int
+		var name string
+		if err := rows.Scan(&id, &name, &skinID); err != nil {
+			return err
+		}
+		if n := len(c.Sets); n == 0 || c.Sets[n-1].ID != id {
+			c.Sets = append(c.Sets, wardrobe.Set{ID: id, Name: name})
+		}
+		last := &c.Sets[len(c.Sets)-1]
+		last.Skins = append(last.Skins, skinID)
 		return nil
 	})
 	return c, err
@@ -274,6 +320,17 @@ func loadSnapshot(ctx context.Context, tx *sql.Tx) (wardrobe.Snapshot, error) {
 	if snap.PricesAt, err = metaTime(ctx, tx, metaPricesAt); err != nil {
 		return snap, err
 	}
+	var chest string
+	err = tx.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", metaChestSets).Scan(&chest)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return snap, err
+	default:
+		if err := json.Unmarshal([]byte(chest), &snap.Chest); err != nil {
+			return snap, fmt.Errorf("meta %s: %w", metaChestSets, err)
+		}
+	}
 	err = each(ctx, tx, "SELECT skin_id FROM account_skins", nil, func(rows *sql.Rows) error {
 		var id int
 		if err := rows.Scan(&id); err != nil {
@@ -320,6 +377,35 @@ func loadSnapshot(ctx context.Context, tx *sql.Tx) (wardrobe.Snapshot, error) {
 	return snap, err
 }
 
+// SaveChestSets records the weapon sets in the current Black Lion Chest.
+func (s *Store) SaveChestSets(ctx context.Context, names []string) error {
+	b, err := json.Marshal(names)
+	if err != nil {
+		return err
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if err := setMeta(ctx, tx, metaChestSets, string(b)); err != nil {
+			return err
+		}
+		return deleteMeta(ctx, tx, metaChestError)
+	})
+}
+
+// SetChestAttempt records when a Black Lion Chest check started. Like
+// SetPricesAttempt, it is that check's schedule clock.
+func (s *Store) SetChestAttempt(ctx context.Context, at time.Time) error {
+	return setMetaTime(ctx, s.db, metaChestTried, at)
+}
+
+// ChestAttemptedAt is when the last Black Lion Chest check started, zero if never.
+func (s *Store) ChestAttemptedAt(ctx context.Context) (time.Time, error) {
+	return metaTime(ctx, s.db, metaChestTried)
+}
+
+func (s *Store) SetChestError(ctx context.Context, msg string) error {
+	return setMeta(ctx, s.db, metaChestError, msg)
+}
+
 // SetPricesAttempt records when a prices refresh started. It is the prices schedule
 // clock: a failing refresh is not retried early, even across restarts.
 func (s *Store) SetPricesAttempt(ctx context.Context, at time.Time) error {
@@ -340,6 +426,7 @@ func (s *Store) SeededAt(ctx context.Context) (time.Time, error) {
 type Errors struct {
 	Orders string
 	Prices string
+	Chest  string
 }
 
 func (s *Store) SetOrdersError(ctx context.Context, msg string) error {
@@ -352,16 +439,13 @@ func (s *Store) SetPricesError(ctx context.Context, msg string) error {
 
 func (s *Store) Errors(ctx context.Context) (Errors, error) {
 	var e Errors
-	err := each(ctx, s.db, "SELECT key, value FROM meta WHERE key IN (?, ?)", []any{metaOrdersError, metaPricesError}, func(rows *sql.Rows) error {
+	dst := map[string]*string{metaOrdersError: &e.Orders, metaPricesError: &e.Prices, metaChestError: &e.Chest}
+	err := each(ctx, s.db, "SELECT key, value FROM meta WHERE key IN (?, ?, ?)", []any{metaOrdersError, metaPricesError, metaChestError}, func(rows *sql.Rows) error {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
 			return err
 		}
-		if k == metaOrdersError {
-			e.Orders = v
-		} else {
-			e.Prices = v
-		}
+		*dst[k] = v
 		return nil
 	})
 	return e, err

@@ -22,10 +22,19 @@ type Item struct {
 	Skins  []int
 }
 
-// Catalog is the static, seeded data: skins and the tradeable items that unlock them.
+// Set is a Black Lion weapon set: the skins asked for by its collection achievement.
+type Set struct {
+	ID    int // the collection achievement id
+	Name  string
+	Skins []int
+}
+
+// Catalog is the static, seeded data: skins, the tradeable items that unlock them, and
+// the Black Lion weapon sets.
 type Catalog struct {
 	Skins map[int]Skin
 	Items map[int]Item
+	Sets  []Set // by name
 }
 
 // skinItems indexes the catalogue by skin.
@@ -34,6 +43,23 @@ func (c Catalog) skinItems() map[int][]int {
 	for _, it := range c.Items {
 		for _, s := range it.Skins {
 			out[s] = append(out[s], it.ID)
+		}
+	}
+	return out
+}
+
+// tracked are the skins the pages track: Guaranteed Wardrobe Unlock skins and the
+// skins in Black Lion weapon sets.
+func (c Catalog) tracked() map[int]bool {
+	out := map[int]bool{}
+	for _, sk := range c.Skins {
+		if sk.GWU {
+			out[sk.ID] = true
+		}
+	}
+	for _, set := range c.Sets {
+		for _, s := range set.Skins {
+			out[s] = true
 		}
 	}
 	return out
@@ -69,6 +95,8 @@ type Snapshot struct {
 	Prices   map[int]Price
 	// Delivery is the trading post delivery box: item id to count.
 	Delivery map[int]int
+	// Chest names the weapon sets in the current Black Lion Chest, from the wiki.
+	Chest []string
 }
 
 // OrdersUpdate is the result of an orders refresh.

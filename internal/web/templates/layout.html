@@ -12,7 +12,7 @@
 <body>
 <header>
   <a class="brand" href="/">gw2tools</a>
-  <nav><a href="/wardrobe" class="active">Wardrobe Unlocks</a></nav>
+  <nav>{{range nav}}<a href="{{.Path}}"{{if eq .Path $.Path}} class="active"{{end}}>{{.Label}}</a>{{end}}</nav>
 </header>
 <main>
 {{end}}
@@ -23,10 +23,31 @@
 </html>
 {{end}}
 
+{{/* When orders and prices were last refreshed. */}}
+{{define "refreshed"}}
+    <span>Orders updated <time datetime="{{datetime .OrdersAt}}">{{ago .OrdersAt .Now}}</time></span>
+    <span>{{if .Pricing}}<span class="badge tied">Updating prices…</span>{{else}}Prices updated <time datetime="{{datetime .PricesAt}}">{{ago .PricesAt .Now}}</time>, next {{until .NextPrices .Now}}{{end}}</span>
+{{end}}
+
+{{/* Missing catalogue and refresh error banners. */}}
+{{define "banners"}}
+{{if not .Seeded}}
+<p class="banner error">No skin catalogue yet. Run <code>mise run seed</code> (or <code>gw2tools seed</code>) to load it.</p>
+{{end}}
+{{with .Errors.Orders}}<p class="banner error">Last orders refresh failed: {{.}}</p>{{end}}
+{{with .Errors.Prices}}<p class="banner error">Last prices refresh failed: {{.}}</p>{{end}}
+{{end}}
+
 {{define "item"}}<span class="item">{{.Name}}</span> <button type="button" class="copy" data-copy="{{.Name}}" title="Copy name for trading post search">⧉</button>{{end}}
 
 {{/* An order's standing. SuggestedBid is set when outbid or tied, OutbidBy only when outbid. */}}
 {{define "status"}}<span class="badge {{.Status.Class}}">{{.Status}}</span>{{if .SuggestedBid}} <span class="detail">{{if .OutbidBy}}by {{coins .OutbidBy}}, {{end}}bid {{coins .SuggestedBid}}</span>{{end}}{{end}}
+
+{{/* A skin Row's "My order" and "Status" cells. */}}
+{{define "order-cells"}}{{$row := .}}
+    <td>{{range .Orders}}<div>{{template "bid" .}}{{if ne .Item.ID $row.Item.ID}} <span class="type">on {{template "item" .Item}}</span>{{end}}</div>{{else}}<span class="none">—</span>{{end}}</td>
+    <td>{{if .Orders}}{{range .Orders}}<div>{{template "status" .}}</div>{{end}}{{else}}<span class="badge none">No order</span>{{with .SuggestedBid}} <span class="detail">bid {{coins .}}</span>{{end}}{{end}}</td>
+{{end}}
 
 {{/* Our bid on an order: unit price and quantity. */}}
 {{define "bid"}}{{coins .Order.Price}} ×{{.Quantity}}{{end}}

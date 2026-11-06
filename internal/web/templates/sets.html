@@ -1,0 +1,56 @@
+{{/* A set row's name and progress cells. */}}
+{{define "set-cells"}}<span class="name">{{.Set.Name}}{{if .InChest}} <img class="chest" src="/static/black-lion-chest.png" alt="In the Black Lion Chest" title="In the current Black Lion Chest">{{end}}</span>
+    <span class="num">{{.Owned}}/{{len .Set.Skins}}{{with .Bought}} <span class="detail">+{{.}} bought</span>{{end}}</span>{{end}}
+
+{{template "head" .}}
+<section class="toolbar">
+  <h1>Black Lion weapon sets</h1>
+  <div class="meta">
+    {{template "refreshed" .}}
+  </div>
+</section>
+
+{{template "banners" .}}
+{{with .Errors.Chest}}<p class="banner error">Last Black Lion Chest check failed: {{.}}</p>{{end}}
+{{if and .Seeded (not .View.Sets)}}
+<p class="banner error">No Black Lion weapon sets in the catalogue. Run <code>mise run seed</code> (or <code>gw2tools seed</code>) again to load them.</p>
+{{end}}
+
+{{with .View}}{{if .Sets}}
+<p class="summary">Sets complete: <strong>{{.Complete}}</strong> / {{len .Sets}}, cheapest to complete first. Open a set to see its missing skins.</p>
+<div class="sets">
+  <div class="set-head"><span>Set</span><span class="num">Collected</span><span class="num">To complete</span><span>My orders</span></div>
+  {{range .Sets}}
+  {{if .Complete}}
+  <div class="set-row complete">
+    {{template "set-cells" .}}
+    <span class="num"><span class="badge top">Complete</span></span>
+    <span></span>
+  </div>
+  {{else}}
+  <details class="set" id="set-{{.Set.ID}}">
+    <summary class="set-row row-{{.Status.Class}}">
+      {{template "set-cells" .}}
+      <span class="num">{{if .Cost}}{{coins .Cost}}{{end}}{{with .Unpriced}} <span class="warn" title="{{.}} missing skin{{if gt . 1}}s have{{else}} has{{end}} no price yet, so the total is too low">⚠</span>{{end}}{{with .Untradeable}} <span class="detail">{{.}} not on the trading post</span>{{end}}</span>
+      <span>{{if .Orders}}<span class="badge {{.Status.Class}}">{{.Status}}</span> <span class="detail">{{.Orders}} order{{if gt .Orders 1}}s{{end}}</span>{{else}}<span class="none">—</span>{{end}}</span>
+    </summary>
+    <table>
+      <thead><tr><th>Skin</th><th>Cheapest item</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>My order</th><th>Status</th></tr></thead>
+      <tbody>
+      {{range .Missing}}
+      <tr class="row-{{.Status.Class}}">
+        <td>{{.Skin.Name}}</td>
+        <td>{{if .Item.ID}}{{template "item" .Item}}{{else}}<span class="none">Not on the trading post</span>{{end}}</td>
+        <td class="num">{{coins .Price.BuyPrice}}</td>
+        <td class="num">{{coins .Price.SellPrice}}</td>
+        {{template "order-cells" .}}
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+  {{end}}
+</div>
+{{end}}{{end}}
+{{template "foot" .}}

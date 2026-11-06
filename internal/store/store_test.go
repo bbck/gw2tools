@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -38,6 +39,11 @@ func TestCatalogRoundTrip(t *testing.T) {
 			10: {ID: 10, Name: "Carrion Flame Blade", Rarity: "Rare", Skins: []int{1}},
 			11: {ID: 11, Name: "Skin Box", Rarity: "Exotic", Skins: []int{1, 2}},
 		},
+		// Loaded by name, with skins by id.
+		Sets: []wardrobe.Set{
+			{ID: 200, Name: "Alpha", Skins: []int{1, 2}},
+			{ID: 100, Name: "Bravo", Skins: []int{1}},
+		},
 	}
 	if err := s.ReplaceCatalog(ctx, want); err != nil {
 		t.Fatal(err)
@@ -50,7 +56,7 @@ func TestCatalogRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.Skins, want.Skins) || !reflect.DeepEqual(got.Items, want.Items) {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("catalog = %+v\nwant %+v", got, want)
 	}
 	if at, _ := s.SeededAt(ctx); at.IsZero() {
@@ -66,6 +72,10 @@ func TestReplaceCatalogRejectsUnknownSkin(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected foreign key error")
+	}
+	err = s.ReplaceCatalog(ctx, wardrobe.Catalog{Sets: []wardrobe.Set{{ID: 1, Name: "x", Skins: []int{99}}}})
+	if err == nil {
+		t.Fatal("expected foreign key error for a set skin")
 	}
 }
 
@@ -223,8 +233,40 @@ func TestReopenKeepsDataAndSkipsMigrations(t *testing.T) {
 	if err != nil || c.Skins[1].Name != "Kept" {
 		t.Fatalf("catalogue after reopen = %+v, %v", c, err)
 	}
+	migrations, _ := fs.Glob(migrationFS, "migrations/*.sql")
 	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
-		t.Fatalf("user_version = %d, %v", version, err)
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != len(migrations) {
+		t.Fatalf("user_version = %d, %v, want %d", version, err, len(migrations))
+	}
+}
+
+func TestChestSets(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	if snap, err := s.LoadSnapshot(ctx); err != nil || snap.Chest != nil {
+		t.Fatalf("snapshot before any check = %+v, %v", snap, err)
+	}
+	at := time.Unix(1_800_000_000, 0).UTC()
+	if err := s.SetChestAttempt(ctx, at); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ChestAttemptedAt(ctx); err != nil || !got.Equal(at) {
+		t.Errorf("attempted = %v, %v", got, err)
+	}
+	if err := s.SetChestError(ctx, "wiki down"); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := s.Errors(ctx); e.Chest != "wiki down" || e.Orders != "" {
+		t.Errorf("errors = %+v", e)
+	}
+	if err := s.SaveChestSets(ctx, []string{"Foefire", "Calligrapher's"}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.LoadSnapshot(ctx)
+	if err != nil || !reflect.DeepEqual(snap.Chest, []string{"Foefire", "Calligrapher's"}) {
+		t.Errorf("chest = %q, %v", snap.Chest, err)
+	}
+	if e, _ := s.Errors(ctx); e.Chest != "" {
+		t.Errorf("chest error not cleared: %q", e.Chest)
 	}
 }

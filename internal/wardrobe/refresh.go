@@ -61,7 +61,8 @@ func RefreshOrders(ctx context.Context, api API, c Catalog, now time.Time) (Orde
 }
 
 // PriceCandidates are the items worth pricing: those that unlock a Guaranteed Wardrobe
-// Unlock skin we don't have and haven't bought (an item for it in the delivery box).
+// Unlock or Black Lion weapon set skin we don't have and haven't bought (an item for
+// it in the delivery box).
 // Items we have orders on are left out because RefreshOrders keeps them current.
 func PriceCandidates(c Catalog, snap Snapshot) []int {
 	skip := map[int]bool{}
@@ -69,13 +70,14 @@ func PriceCandidates(c Catalog, snap Snapshot) []int {
 		skip[o.ItemID] = true
 	}
 	locked, _ := c.locked(snap)
+	tracked := c.tracked()
 	var ids []int
 	for _, it := range c.Items {
 		if skip[it.ID] {
 			continue
 		}
 		for _, s := range it.Skins {
-			if c.Skins[s].GWU && locked(s) {
+			if tracked[s] && locked(s) {
 				ids = append(ids, it.ID)
 				break
 			}

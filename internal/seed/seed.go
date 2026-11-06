@@ -3,6 +3,7 @@
 package seed
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -98,18 +99,102 @@ func MapItems(items []gw2.Item, skins map[int]wardrobe.Skin) map[int]wardrobe.It
 	return out
 }
 
+// BlackLionCategory is the "Black Lion Collections" achievement category. Each Black
+// Lion weapon set has a collection achievement there whose bits are the set's skins,
+// so a newly released set is picked up by seeding again.
+const BlackLionCategory = 76
+
+// weaponTypes maps /v2/skins weapon types to the analyser's names, where they differ.
+var weaponTypes = map[string]string{"LongBow": "Longbow", "ShortBow": "Short bow", "Speargun": "Harpoon gun"}
+
 // API is the subset of the GW2 API seeding uses.
 type API interface {
 	CommerceItemIDs(ctx context.Context) ([]int, error)
 	Items(ctx context.Context, ids []int) ([]gw2.Item, error)
+	AchievementCategory(ctx context.Context, id int) ([]int, error)
+	Achievements(ctx context.Context, ids []int) ([]gw2.Achievement, error)
+	Skins(ctx context.Context, ids []int) ([]gw2.Skin, error)
+}
+
+// Sets reads the Black Lion weapon sets: the achievements in BlackLionCategory whose
+// bits are all skins. The category also holds mini and toy collections, which are
+// skipped and logged, so a new set with an unexpected shape is noticed.
+func Sets(ctx context.Context, api API, log *slog.Logger) ([]wardrobe.Set, error) {
+	ids, err := api.AchievementCategory(ctx, BlackLionCategory)
+	if err != nil {
+		return nil, fmt.Errorf("black lion collections: %w", err)
+	}
+	achievements, err := api.Achievements(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("black lion collections: %w", err)
+	}
+	var sets []wardrobe.Set
+	for _, a := range achievements {
+		set := wardrobe.Set{ID: a.ID, Name: strings.TrimSuffix(a.Name, " Weapon Collection")}
+		for _, b := range a.Bits {
+			if b.Type != "Skin" {
+				set.Skins = nil
+				break
+			}
+			set.Skins = append(set.Skins, b.ID)
+		}
+		if len(set.Skins) == 0 {
+			log.Info("skipping black lion collection, not a weapon set", "id", a.ID, "name", a.Name)
+			continue
+		}
+		sets = append(sets, set)
+	}
+	return sets, nil
+}
+
+// addSetSkins adds set skins the analyser does not list (e.g. a set newer than its
+// data) to skins, from /v2/skins. Skins the API does not know are dropped from their set.
+func addSetSkins(ctx context.Context, api API, sets []wardrobe.Set, skins map[int]wardrobe.Skin, log *slog.Logger) error {
+	var missing []int
+	for _, set := range sets {
+		for _, id := range set.Skins {
+			if _, ok := skins[id]; !ok {
+				missing = append(missing, id)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	log.Info("fetching set skins missing from the analyser", "skins", len(missing))
+	found, err := api.Skins(ctx, missing)
+	if err != nil {
+		return fmt.Errorf("fetching set skins: %w", err)
+	}
+	for _, sk := range found {
+		skins[sk.ID] = wardrobe.Skin{
+			ID:      sk.ID,
+			Name:    sk.Name,
+			Section: strings.ToLower(sk.Type),
+			Type:    cmp.Or(weaponTypes[sk.Details.Type], sk.Details.Type),
+			Rarity:  sk.Rarity,
+		}
+	}
+	for i := range sets {
+		sets[i].Skins = slices.DeleteFunc(sets[i].Skins, func(id int) bool {
+			_, ok := skins[id]
+			if !ok {
+				log.Warn("dropping unknown skin from set", "set", sets[i].Name, "skin", id)
+			}
+			return !ok
+		})
+	}
+	return nil
 }
 
 type Catalog interface {
 	ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error
+	WeaponSetCount(ctx context.Context) (int, error)
 }
 
 // Run builds the catalogue from the analyser content at contentSrc (a URL or file
-// path) and every tradeable item's details, then replaces the stored catalogue.
+// path), the Black Lion weapon sets, and every tradeable item's details, then replaces
+// the stored catalogue.
 func Run(ctx context.Context, api API, dst Catalog, contentSrc string, log *slog.Logger) error {
 	log.Info("loading skins", "source", contentSrc)
 	rc, err := open(ctx, contentSrc)
@@ -128,6 +213,24 @@ func Run(ctx context.Context, api API, dst Catalog, contentSrc string, log *slog
 		}
 	}
 	log.Info("loaded skins", "skins", len(skins), "gwu", gwu)
+
+	sets, err := Sets(ctx, api, log)
+	if err != nil {
+		return err
+	}
+	// Sets are only ever added, so fewer than before means the API or the filter
+	// changed. Stop before replacing (and losing) the stored sets.
+	stored, err := dst.WeaponSetCount(ctx)
+	if err != nil {
+		return err
+	}
+	if len(sets) == 0 || len(sets) < stored {
+		return fmt.Errorf("found %d black lion weapon sets, fewer than the %d stored; not replacing the catalogue", len(sets), stored)
+	}
+	if err := addSetSkins(ctx, api, sets, skins, log); err != nil {
+		return err
+	}
+	log.Info("loaded black lion weapon sets", "sets", len(sets))
 
 	ids, err := api.CommerceItemIDs(ctx)
 	if err != nil {
@@ -148,8 +251,8 @@ func Run(ctx context.Context, api API, dst Catalog, contentSrc string, log *slog
 		log.Info("progress", "done", done, "of", len(ids))
 	}
 
-	c := wardrobe.Catalog{Skins: skins, Items: MapItems(all, skins)}
-	log.Info("saving catalogue", "skins", len(c.Skins), "items", len(c.Items))
+	c := wardrobe.Catalog{Skins: skins, Items: MapItems(all, skins), Sets: sets}
+	log.Info("saving catalogue", "skins", len(c.Skins), "items", len(c.Items), "sets", len(c.Sets))
 	return dst.ReplaceCatalog(ctx, c)
 }
 
