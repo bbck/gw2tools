@@ -5,6 +5,7 @@ A collection of utilities for the game Guild Wars 2.
 ## Tools
 
 - Guaranteed wardrobe unlock TP tracking
+- Black Lion weapon set completion costs
 
 ## Running
 
@@ -20,3 +21,4 @@ GW2_API_KEY=your-key ./bin/gw2tools serve
 ## Credits
 
 - Guaranteed wardrobe unlock data comes from immortius' [Wardrobe Unlock Analyser](https://github.com/immortius/gw2-wardrobe-unlock)
+- Current Black Lion Chest contents come from the [Guild Wars 2 Wiki](https://wiki.guildwars2.com/wiki/Black_Lion_Chest)
