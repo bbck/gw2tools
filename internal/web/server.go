@@ -132,7 +132,7 @@ func (s *Server) maybeRefreshPrices(ctx context.Context, cat wardrobe.Catalog, u
 	if err != nil || s.now().Sub(tried) < s.intervals.Prices {
 		return err
 	}
-	snap := wardrobe.Snapshot{Owned: map[int]bool{}, Orders: u.Orders, Delivery: u.Delivery}
+	snap := wardrobe.Snapshot{Owned: map[wardrobe.Key]bool{}, Orders: u.Orders, Delivery: u.Delivery}
 	for _, id := range u.Owned {
 		snap.Owned[id] = true
 	}
@@ -180,7 +180,7 @@ func (s *Server) refreshOrders(ctx context.Context, cat wardrobe.Catalog) (wardr
 		s.recordError(ctx, s.store.SetOrdersError, err)
 		return u, fmt.Errorf("orders: %w", err)
 	}
-	s.log.Info("refreshed orders", "unlocked_skins", len(u.Owned), "orders", len(u.Orders), "delivery_items", len(u.Delivery), "took", s.now().Sub(start).Round(time.Millisecond))
+	s.log.Info("refreshed orders", "unlocked", len(u.Owned), "orders", len(u.Orders), "delivery_items", len(u.Delivery), "took", s.now().Sub(start).Round(time.Millisecond))
 	return u, nil
 }
 

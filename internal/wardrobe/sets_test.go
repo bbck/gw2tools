@@ -31,7 +31,7 @@ func setNames(v SetsView) []string {
 
 func TestSetsSortedByCostToComplete(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{5: true},
+		Owned: map[Key]bool{sk(5): true},
 		Prices: map[int]Price{
 			10: price(10, 300, 400),
 			11: price(11, 200, 250),
@@ -53,7 +53,7 @@ func TestSetsSortedByCostToComplete(t *testing.T) {
 		t.Fatalf("cheap = %+v", cheap)
 	}
 	// Cheapest skin first, each through its cheapest item.
-	if m := cheap.Missing; m[0].Skin.ID != 1 || m[0].Item.ID != 11 || m[1].Skin.ID != 2 {
+	if m := cheap.Missing; m[0].Skin.ID != sk(1) || m[0].Item.ID != 11 || m[1].Skin.ID != sk(2) {
 		t.Errorf("cheap missing = %+v", m)
 	}
 	if pricey := v.Sets[1]; pricey.Cost != 5000+4000 {
@@ -66,7 +66,7 @@ func TestSetsSortedByCostToComplete(t *testing.T) {
 
 func TestSetsOrdersBoughtAndUnpriced(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{},
+		Owned: map[Key]bool{},
 		Orders: []Order{
 			{ID: 1, ItemID: 10, Price: 300, Quantity: 1}, // skin 1: top
 			{ID: 2, ItemID: 20, Price: 50, Quantity: 1},  // skin 2: outbid
@@ -93,7 +93,7 @@ func TestSetsOrdersBoughtAndUnpriced(t *testing.T) {
 		t.Fatalf("pricey = %+v", pricey)
 	}
 	// An unpriced skin still names an item to search for.
-	if m := pricey.Missing[0]; m.Skin.ID != 3 || m.Item.ID != 30 {
+	if m := pricey.Missing[0]; m.Skin.ID != sk(3) || m.Item.ID != 30 {
 		t.Errorf("unpriced row = %+v", m)
 	}
 	if pricey.Status != StatusNoOrder {
@@ -103,19 +103,19 @@ func TestSetsOrdersBoughtAndUnpriced(t *testing.T) {
 
 func TestPriceCandidatesIncludeSetSkins(t *testing.T) {
 	c := setsCatalog()
-	c.Skins[5] = Skin{ID: 5, Name: "Echo"} // non-GWU, but in the "Done" set
-	ids := PriceCandidates(c, Snapshot{Owned: map[int]bool{}})
+	c.Skins[sk(5)] = Skin{ID: sk(5), Name: "Echo"} // non-GWU, but in the "Done" set
+	ids := PriceCandidates(c, Snapshot{Owned: map[Key]bool{}})
 	if !slices.Contains(ids, 50) {
 		t.Errorf("candidates = %v, want item 50 for set skin 5", ids)
 	}
 	c.Sets = nil
-	if ids := PriceCandidates(c, Snapshot{Owned: map[int]bool{}}); slices.Contains(ids, 50) {
+	if ids := PriceCandidates(c, Snapshot{Owned: map[Key]bool{}}); slices.Contains(ids, 50) {
 		t.Errorf("candidates = %v, item 50 unlocks no GWU or set skin", ids)
 	}
 }
 
 func TestSetsInChest(t *testing.T) {
-	snap := Snapshot{Owned: map[int]bool{}, Chest: []string{"cheap", "Gem’s Not A Set"}}
+	snap := Snapshot{Owned: map[Key]bool{}, Chest: []string{"cheap", "Gem’s Not A Set"}}
 	c := setsCatalog()
 	c.Sets[2].Name = "Gem's" // straight apostrophe in the catalogue
 	snap.Chest = append(snap.Chest, "Gem’s")

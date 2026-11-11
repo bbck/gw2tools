@@ -27,36 +27,55 @@ func TestParseContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(skins) != 3 {
-		t.Fatalf("skins = %+v, want armor and weapon only", skins)
+	if len(skins) != 5 {
+		t.Fatalf("skins = %+v, want armor, weapon, finisher and mini", skins)
 	}
-	if s := skins[100]; !s.GWU || s.Section != "armor" || s.Type != "Helm" || s.Name != "Test Helm" {
+	if s := skins[wardrobe.SkinKey(100)]; !s.GWU || s.Section != "armor" || s.Type != "Helm" || s.Name != "Test Helm" {
 		t.Errorf("skin 100 = %+v", s)
 	}
-	if skins[101].GWU {
+	if skins[wardrobe.SkinKey(101)].GWU {
 		t.Error("skin 101 should not be GWU")
 	}
-	if _, ok := skins[300]; ok {
-		t.Error("minis are not wardrobe skins")
+	if f := skins[wardrobe.FinisherKey(24)]; f != (wardrobe.Skin{ID: wardrobe.FinisherKey(24), Name: "Twisted Watchwork Finisher", Section: "finisher", Rarity: "Rare", GWU: true}) {
+		t.Errorf("finisher 24 = %+v", f)
+	}
+	if m := skins[wardrobe.MiniKey(300)]; m != (wardrobe.Skin{ID: wardrobe.MiniKey(300), Name: "Mini Test", Section: "mini", Rarity: "Rare", GWU: true}) {
+		t.Errorf("mini 300 = %+v", m)
 	}
 }
 
 func TestMapItems(t *testing.T) {
-	skins := map[int]wardrobe.Skin{100: {ID: 100}, 200: {ID: 200}}
+	keys := []wardrobe.Key{wardrobe.SkinKey(100), wardrobe.SkinKey(200), wardrobe.FinisherKey(24), wardrobe.MiniKey(300)}
+	skins := map[wardrobe.Key]wardrobe.Skin{}
+	for _, k := range keys {
+		skins[k] = wardrobe.Skin{ID: k}
+	}
 	items := MapItems([]gw2.Item{
 		{ID: 1, Name: "Helm", DefaultSkin: 100},
 		{ID: 2, Name: "Unknown skin", DefaultSkin: 999},
 		{ID: 3, Name: "Box", Details: gw2.ItemDetails{Skins: []int{100, 200, 999, 200}}},
 		{ID: 4, Name: "Material"},
-	}, skins)
-	if len(items) != 2 {
+		{ID: 5, Name: "Permanent Twisted Watchwork Finisher"},
+		{ID: 6, Name: "Unknown Finisher"},
+		{ID: 7, Name: "Mini Test", Details: gw2.ItemDetails{MinipetID: 300}},
+		{ID: 8, Name: "Mini Unknown", Details: gw2.ItemDetails{MinipetID: 301}},
+		// Default skin 24 is a skin, not finisher 24.
+		{ID: 9, Name: "Skin 24", DefaultSkin: 24},
+	}, skins, []gw2.Finisher{{ID: 24, UnlockItems: []int{5}}, {ID: 99, UnlockItems: []int{6}}})
+	if len(items) != 4 {
 		t.Fatalf("items = %+v", items)
 	}
-	if !slices.Equal(items[1].Skins, []int{100}) {
+	if !slices.Equal(items[1].Skins, []wardrobe.Key{wardrobe.SkinKey(100)}) {
 		t.Errorf("item 1 skins = %v", items[1].Skins)
 	}
-	if !slices.Equal(items[3].Skins, []int{100, 200}) {
+	if !slices.Equal(items[3].Skins, []wardrobe.Key{wardrobe.SkinKey(100), wardrobe.SkinKey(200)}) {
 		t.Errorf("item 3 skins = %v", items[3].Skins)
+	}
+	if !slices.Equal(items[5].Skins, []wardrobe.Key{wardrobe.FinisherKey(24)}) {
+		t.Errorf("finisher item skins = %v", items[5].Skins)
+	}
+	if !slices.Equal(items[7].Skins, []wardrobe.Key{wardrobe.MiniKey(300)}) {
+		t.Errorf("mini item skins = %v", items[7].Skins)
 	}
 }
 
@@ -65,16 +84,20 @@ func TestRunAgainstFakeAPI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v2/commerce/prices":
-			w.Write([]byte(`[1,2,3,4]`))
+			w.Write([]byte(`[1,2,3,4,5,6]`))
+		case "/v2/finishers":
+			w.Write([]byte(`[{"id":24,"name":"Twisted Watchwork Finisher","unlock_items":[5]}]`))
 		case "/v2/items":
-			if r.URL.Query().Get("ids") != "1,2,3,4" {
+			if r.URL.Query().Get("ids") != "1,2,3,4,5,6" {
 				t.Errorf("ids = %q", r.URL.Query().Get("ids"))
 			}
 			w.Write([]byte(`[
 				{"id":1,"name":"Test Helm Item","type":"Armor","rarity":"Rare","default_skin":100},
 				{"id":2,"name":"Test Sword Item","type":"Weapon","rarity":"Masterwork","default_skin":200},
 				{"id":3,"name":"Ore","type":"CraftingMaterial","rarity":"Basic"},
-				{"id":4,"name":"New Longbow Skin","type":"Consumable","rarity":"Exotic","details":{"skins":[400]}}
+				{"id":4,"name":"New Longbow Skin","type":"Consumable","rarity":"Exotic","details":{"skins":[400]}},
+				{"id":5,"name":"Permanent Twisted Watchwork Finisher","type":"Consumable","rarity":"Rare","details":{"type":"Unlock"}},
+				{"id":6,"name":"Mini Test","type":"MiniPet","rarity":"Rare","details":{"minipet_id":300}}
 			]`))
 		case "/v2/achievements/categories/76":
 			w.Write([]byte(`{"id":76,"achievements":[1,2,3]}`))
@@ -122,19 +145,28 @@ func TestRunAgainstFakeAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Skins) != 4 || len(c.Items) != 3 {
+	if len(c.Skins) != 6 || len(c.Items) != 5 {
 		t.Fatalf("catalog = %+v", c)
 	}
 	if want := []wardrobe.Set{{ID: 1, Name: "New", Skins: []int{200, 400}}}; !reflect.DeepEqual(c.Sets, want) {
 		t.Errorf("sets = %+v, want %+v", c.Sets, want)
 	}
-	if sk := c.Skins[400]; sk != (wardrobe.Skin{ID: 400, Name: "New Longbow", Section: "weapon", Type: "Longbow", Rarity: "Exotic"}) {
+	if sk := c.Skins[wardrobe.SkinKey(400)]; sk != (wardrobe.Skin{ID: wardrobe.SkinKey(400), Name: "New Longbow", Section: "weapon", Type: "Longbow", Rarity: "Exotic"}) {
 		t.Errorf("skin from /v2/skins = %+v", sk)
 	}
-	if !slices.Equal(c.Items[4].Skins, []int{400}) {
+	if !slices.Equal(c.Items[4].Skins, []wardrobe.Key{wardrobe.SkinKey(400)}) {
 		t.Errorf("item for the new set skin = %+v", c.Items[4])
 	}
-	if c.Items[2].Name != "Test Sword Item" || !slices.Equal(c.Items[2].Skins, []int{200}) {
+	if c.Items[5].Name != "Permanent Twisted Watchwork Finisher" || !slices.Equal(c.Items[5].Skins, []wardrobe.Key{wardrobe.FinisherKey(24)}) {
+		t.Errorf("finisher item = %+v", c.Items[5])
+	}
+	if !slices.Equal(c.Items[6].Skins, []wardrobe.Key{wardrobe.MiniKey(300)}) {
+		t.Errorf("mini item = %+v", c.Items[6])
+	}
+	if f := c.Skins[wardrobe.FinisherKey(24)]; f.Name != "Twisted Watchwork Finisher" || !f.GWU {
+		t.Errorf("finisher = %+v", f)
+	}
+	if c.Items[2].Name != "Test Sword Item" || !slices.Equal(c.Items[2].Skins, []wardrobe.Key{wardrobe.SkinKey(200)}) {
 		t.Errorf("item 2 = %+v", c.Items[2])
 	}
 

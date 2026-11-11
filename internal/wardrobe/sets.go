@@ -73,7 +73,8 @@ func BuildSets(c Catalog, snap Snapshot) SetsView {
 	for _, set := range c.Sets {
 		r := SetRow{Set: set, InChest: inChest[setKey(set.Name)]}
 		var orders []OrderRow
-		for _, id := range set.Skins {
+		for _, skinID := range set.Skins {
+			id := SkinKey(skinID)
 			switch {
 			case snap.Owned[id]:
 				r.Owned++

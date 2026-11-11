@@ -17,12 +17,12 @@
 {{template "banners" .}}
 
 {{with .View}}
-{{if .GWUTotal}}<p class="summary">Tradeable Guaranteed Wardrobe Unlock skins unlocked: <strong>{{.GWUOwned}}</strong> / {{.GWUTotal}}</p>{{end}}
+{{if .GWUTotal}}<p class="summary">Tradeable Guaranteed Wardrobe Unlocks: <strong>{{.GWUOwned}}</strong> / {{.GWUTotal}}</p>{{end}}
 
 {{if .Delivery}}
 <h2>Delivery box</h2>
 <table>
-  <thead><tr><th>Skin</th><th>Item</th><th class="num">Qty</th></tr></thead>
+  <thead><tr><th>Unlocks</th><th>Item</th><th class="num">Qty</th></tr></thead>
   <tbody>
   {{range .Delivery}}
   <tr>
@@ -35,10 +35,10 @@
 </table>
 {{end}}
 
-<h2>Cheapest {{.Limit}} missing GWU skins <span class="sub">total {{coins .CheapestCost}}</span></h2>
+<h2>Cheapest {{.Limit}} missing GWU unlocks <span class="sub">total {{coins .CheapestCost}}</span></h2>
 {{if .Cheapest}}
 <table>
-  <thead><tr><th class="num">#</th><th>Skin</th><th>Cheapest item</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>My order</th><th>Status</th></tr></thead>
+  <thead><tr><th class="num">#</th><th>Unlock</th><th>Cheapest item</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>My order</th><th>Status</th></tr></thead>
   <tbody>
   {{range .Cheapest}}
   <tr class="row-{{.Status.Class}}">
@@ -54,10 +54,10 @@
 </table>
 {{else}}<p class="empty">Nothing to show yet.</p>{{end}}
 
-<h2>Other orders on missing skins <span class="sub">outside the cheapest {{.Limit}}, total {{coins .OthersCost}}</span></h2>
+<h2>Other orders on missing unlocks <span class="sub">outside the cheapest {{.Limit}}, total {{coins .OthersCost}}</span></h2>
 {{if .Others}}
 <table>
-  <thead><tr><th>Skin</th><th>GWU</th><th>Order item</th><th class="num">My bid</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>Status</th></tr></thead>
+  <thead><tr><th>Unlock</th><th>GWU</th><th>Order item</th><th class="num">My bid</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>Status</th></tr></thead>
   <tbody>
   {{range .Others}}{{$row := .}}{{range .Orders}}
   <tr class="row-{{.Status.Class}}">
@@ -75,7 +75,7 @@
 {{else}}<p class="empty">None.</p>{{end}}
 
 {{if .Redundant}}
-<h2>Orders on skins already unlocked or bought <span class="sub">consider cancelling</span></h2>
+<h2>Orders on items already unlocked or bought <span class="sub">consider cancelling</span></h2>
 <table>
   <thead><tr><th>Item</th><th class="num">My bid</th><th class="num">Top bid</th><th>Status</th></tr></thead>
   <tbody>
@@ -91,6 +91,6 @@
 </table>
 {{end}}
 
-{{if .OtherOrders}}<p class="footnote">{{.OtherOrders}} buy order(s) on items that don't unlock a skin are hidden.</p>{{end}}
+{{if .OtherOrders}}<p class="footnote">{{.OtherOrders}} buy order(s) on items that don't unlock a skin, finisher or mini are hidden.</p>{{end}}
 {{end}}
 {{template "foot" .}}

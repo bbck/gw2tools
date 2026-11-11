@@ -12,6 +12,8 @@ import (
 
 type fakeAPI struct {
 	owned      []int
+	finishers  []gw2.AccountFinisher
+	minis      []int
 	buys       []gw2.Transaction
 	prices     map[int]gw2.Price
 	listings   map[int]gw2.Listing
@@ -22,6 +24,10 @@ type fakeAPI struct {
 }
 
 func (f *fakeAPI) AccountSkins(context.Context) ([]int, error) { return f.owned, f.err }
+func (f *fakeAPI) AccountFinishers(context.Context) ([]gw2.AccountFinisher, error) {
+	return f.finishers, nil
+}
+func (f *fakeAPI) AccountMinis(context.Context) ([]int, error) { return f.minis, nil }
 func (f *fakeAPI) CurrentBuys(context.Context) ([]gw2.Transaction, error) {
 	return f.buys, nil
 }
@@ -39,6 +45,9 @@ func (f *fakeAPI) Listings(_ context.Context, ids []int) ([]gw2.Listing, error) 
 func TestRefreshOrders(t *testing.T) {
 	api := &fakeAPI{
 		owned: []int{1, 2},
+		// Finisher 7 has only charges left, so it is not unlocked.
+		finishers: []gw2.AccountFinisher{{ID: 9, Permanent: true}, {ID: 7}},
+		minis:     []int{1},
 		buys: []gw2.Transaction{
 			{ID: 1, ItemID: 20, Price: 100, Quantity: 1},
 			{ID: 2, ItemID: 50, Price: 100, Quantity: 1},
@@ -63,7 +72,7 @@ func TestRefreshOrders(t *testing.T) {
 	if !slices.Equal(api.listingIDs, []int{20, 50}) {
 		t.Errorf("listing ids = %v, want only catalogue items with orders", api.listingIDs)
 	}
-	if len(u.Orders) != 3 || !slices.Equal(u.Owned, []int{1, 2}) || !u.At.Equal(now) {
+	if len(u.Orders) != 3 || !slices.Equal(u.Owned, []Key{sk(1), sk(2), FinisherKey(9), MiniKey(1)}) || !u.At.Equal(now) {
 		t.Errorf("update = %+v", u)
 	}
 	if u.Delivery[30] != 3 || u.Delivery[40] != 1 {
@@ -77,7 +86,7 @@ func TestRefreshOrders(t *testing.T) {
 
 func TestPriceCandidates(t *testing.T) {
 	// Skin 1 owned; item 40 has an order; item 50 is a non-GWU skin.
-	snap := Snapshot{Owned: map[int]bool{1: true}, Orders: []Order{{ItemID: 40}}}
+	snap := Snapshot{Owned: map[Key]bool{sk(1): true}, Orders: []Order{{ItemID: 40}}}
 	got := PriceCandidates(testCatalog(), snap)
 	if want := []int{20, 30}; !slices.Equal(got, want) {
 		t.Errorf("candidates = %v, want %v", got, want)

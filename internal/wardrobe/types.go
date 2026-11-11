@@ -1,45 +1,72 @@
-// Package wardrobe tracks trading post buy orders for items that unlock wardrobe skins.
+// Package wardrobe tracks trading post buy orders for items that unlock wardrobe skins,
+// finishers and minis.
 package wardrobe
 
-import "time"
+import (
+	"cmp"
+	"time"
+)
 
-// Skin is a wardrobe skin from the seeded catalogue.
+// Kind is the API id space an unlock belongs to.
+type Kind string
+
+const (
+	KindSkin     Kind = "skin"     // /v2/skins, /v2/account/skins
+	KindFinisher Kind = "finisher" // /v2/finishers, /v2/account/finishers
+	KindMini     Kind = "mini"     // /v2/minis, /v2/account/minis
+)
+
+// Key identifies an unlock. API ids are only unique within a kind: there is a skin 24
+// and a finisher 24.
+type Key struct {
+	Kind Kind
+	ID   int
+}
+
+func SkinKey(id int) Key     { return Key{KindSkin, id} }
+func FinisherKey(id int) Key { return Key{KindFinisher, id} }
+func MiniKey(id int) Key     { return Key{KindMini, id} }
+
+func compareKeys(a, b Key) int { return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.ID, b.ID)) }
+
+// Skin is an unlock from the seeded catalogue: a wardrobe skin, a finisher or a mini.
+// The code calls them all skins; Key.Kind tells them apart.
 type Skin struct {
-	ID      int
+	ID      Key
 	Name    string
-	Section string // armor, weapon or back
-	Type    string // e.g. Sword, Coat
+	Section string // armor, weapon, back, finisher or mini
+	Type    string // e.g. Sword, Coat; empty for finishers and minis
 	Rarity  string
-	// GWU marks skins that can drop from a Guaranteed Wardrobe Unlock.
+	// GWU marks unlocks that can drop from a Guaranteed Wardrobe Unlock.
 	GWU bool
 }
 
-// Item is a tradeable item that unlocks one or more skins.
+// Item is a tradeable item that unlocks one or more skins, finishers or minis.
 type Item struct {
 	ID     int
 	Name   string
 	Rarity string
-	Skins  []int
+	Skins  []Key
 }
 
 // Set is a Black Lion weapon set: the skins asked for by its collection achievement.
 type Set struct {
 	ID    int // the collection achievement id
 	Name  string
-	Skins []int
+	Skins []int // skin ids (KindSkin)
 }
 
 // Catalog is the static, seeded data: skins, the tradeable items that unlock them, and
 // the Black Lion weapon sets.
 type Catalog struct {
-	Skins map[int]Skin
+	Skins map[Key]Skin
 	Items map[int]Item
 	Sets  []Set // by name
 }
 
 // skinItems indexes the catalogue by skin.
-func (c Catalog) skinItems() map[int][]int {
-	out := make(map[int][]int)
+func (c Catalog) skinItems() map[Key][]int {
+	out := make(map[Key][]int)
 	for _, it := range c.Items {
 		for _, s := range it.Skins {
 			out[s] = append(out[s], it.ID)
@@ -48,10 +75,10 @@ func (c Catalog) skinItems() map[int][]int {
 	return out
 }
 
-// tracked are the skins the pages track: Guaranteed Wardrobe Unlock skins and the
-// skins in Black Lion weapon sets.
-func (c Catalog) tracked() map[int]bool {
-	out := map[int]bool{}
+// tracked are the unlocks the pages track: Guaranteed Wardrobe Unlock skins, finishers
+// and minis, and the skins in Black Lion weapon sets.
+func (c Catalog) tracked() map[Key]bool {
+	out := map[Key]bool{}
 	for _, sk := range c.Skins {
 		if sk.GWU {
 			out[sk.ID] = true
@@ -59,7 +86,7 @@ func (c Catalog) tracked() map[int]bool {
 	}
 	for _, set := range c.Sets {
 		for _, s := range set.Skins {
-			out[s] = true
+			out[SkinKey(s)] = true
 		}
 	}
 	return out
@@ -90,7 +117,7 @@ type Order struct {
 type Snapshot struct {
 	OrdersAt time.Time // last orders refresh
 	PricesAt time.Time // start of the last successful prices refresh
-	Owned    map[int]bool
+	Owned    map[Key]bool
 	Orders   []Order
 	Prices   map[int]Price
 	// Delivery is the trading post delivery box: item id to count.
@@ -101,8 +128,9 @@ type Snapshot struct {
 
 // OrdersUpdate is the result of an orders refresh.
 type OrdersUpdate struct {
-	At     time.Time
-	Owned  []int // every skin the account has unlocked
+	At time.Time
+	// Owned is every skin, permanent finisher and mini the account has unlocked.
+	Owned  []Key
 	Orders []Order
 	// Prices for items we have orders on, from the order book.
 	Prices map[int]Price

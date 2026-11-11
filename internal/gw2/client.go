@@ -113,13 +113,50 @@ type Item struct {
 }
 
 type ItemDetails struct {
-	Skins []int `json:"skins"`
+	Skins     []int `json:"skins"`
+	MinipetID int   `json:"minipet_id"` // the mini a MiniPet item unlocks
 }
 
 // AccountSkins returns the skin ids unlocked on the account. Needs the "unlocks" permission.
 func (c *Client) AccountSkins(ctx context.Context) ([]int, error) {
 	var ids []int
 	_, err := c.get(ctx, "/v2/account/skins", nil, true, &ids)
+	return ids, err
+}
+
+// AccountFinisher is a finisher on the account. Permanent is false for finishers
+// that only have charges left.
+type AccountFinisher struct {
+	ID        int  `json:"id"`
+	Permanent bool `json:"permanent"`
+}
+
+// AccountFinishers returns the finishers on the account. Needs the "unlocks" permission.
+func (c *Client) AccountFinishers(ctx context.Context) ([]AccountFinisher, error) {
+	var fs []AccountFinisher
+	_, err := c.get(ctx, "/v2/account/finishers", nil, true, &fs)
+	return fs, err
+}
+
+// Finisher is a finisher from /v2/finishers, with the items that unlock it.
+type Finisher struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	UnlockItems []int  `json:"unlock_items"`
+}
+
+// Finishers returns every finisher, in one request.
+func (c *Client) Finishers(ctx context.Context) ([]Finisher, error) {
+	var fs []Finisher
+	_, err := c.get(ctx, "/v2/finishers", url.Values{"ids": {"all"}}, false, &fs)
+	return fs, err
+}
+
+// AccountMinis returns the ids of the minis unlocked on the account. Needs the
+// "unlocks" permission.
+func (c *Client) AccountMinis(ctx context.Context) ([]int, error) {
+	var ids []int
+	_, err := c.get(ctx, "/v2/account/minis", nil, true, &ids)
 	return ids, err
 }
 

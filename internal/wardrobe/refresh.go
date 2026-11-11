@@ -13,20 +13,22 @@ import (
 // API is the subset of the GW2 API a refresh uses.
 type API interface {
 	AccountSkins(ctx context.Context) ([]int, error)
+	AccountFinishers(ctx context.Context) ([]gw2.AccountFinisher, error)
+	AccountMinis(ctx context.Context) ([]int, error)
 	CurrentBuys(ctx context.Context) ([]gw2.Transaction, error)
 	Delivery(ctx context.Context) ([]gw2.DeliveryItem, error)
 	Prices(ctx context.Context, ids []int) ([]gw2.Price, error)
 	Listings(ctx context.Context, ids []int) ([]gw2.Listing, error)
 }
 
-// RefreshOrders is the frequent, cheap refresh: unlocked skins, open buy orders, the
-// delivery box, and the order book for the skin items we have orders on. A handful of
-// requests.
+// RefreshOrders is the frequent, cheap refresh: unlocked skins, finishers and minis,
+// open buy orders, the delivery box, and the order book for the skin items we have
+// orders on. A handful of requests.
 func RefreshOrders(ctx context.Context, api API, c Catalog, now time.Time) (OrdersUpdate, error) {
 	u := OrdersUpdate{At: now, Prices: map[int]Price{}, Delivery: map[int]int{}}
 	var err error
-	if u.Owned, err = api.AccountSkins(ctx); err != nil {
-		return u, fmt.Errorf("account skins: %w", err)
+	if u.Owned, err = ownedUnlocks(ctx, api); err != nil {
+		return u, err
 	}
 	buys, err := api.CurrentBuys(ctx)
 	if err != nil {
@@ -60,8 +62,38 @@ func RefreshOrders(ctx context.Context, api API, c Catalog, now time.Time) (Orde
 	return u, nil
 }
 
+// ownedUnlocks returns every skin, finisher and mini the account has unlocked.
+func ownedUnlocks(ctx context.Context, api API) ([]Key, error) {
+	skins, err := api.AccountSkins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("account skins: %w", err)
+	}
+	finishers, err := api.AccountFinishers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("account finishers: %w", err)
+	}
+	minis, err := api.AccountMinis(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("account minis: %w", err)
+	}
+	owned := make([]Key, 0, len(skins)+len(finishers)+len(minis))
+	for _, id := range skins {
+		owned = append(owned, SkinKey(id))
+	}
+	// A finisher with only charges left is not unlocked.
+	for _, f := range finishers {
+		if f.Permanent {
+			owned = append(owned, FinisherKey(f.ID))
+		}
+	}
+	for _, id := range minis {
+		owned = append(owned, MiniKey(id))
+	}
+	return owned, nil
+}
+
 // PriceCandidates are the items worth pricing: those that unlock a Guaranteed Wardrobe
-// Unlock or Black Lion weapon set skin we don't have and haven't bought (an item for
+// Unlock skin, finisher or mini, or a Black Lion weapon set skin, we don't have and haven't bought (an item for
 // it in the delivery box).
 // Items we have orders on are left out because RefreshOrders keeps them current.
 func PriceCandidates(c Catalog, snap Snapshot) []int {

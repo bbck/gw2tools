@@ -10,24 +10,26 @@ import (
 // Skin 1 is unlocked by two items; item 30 is a box unlocking skins 3 and 4.
 func testCatalog() Catalog {
 	return Catalog{
-		Skins: map[int]Skin{
-			1: {ID: 1, Name: "Alpha", Section: "weapon", GWU: true},
-			2: {ID: 2, Name: "Bravo", Section: "armor", GWU: true},
-			3: {ID: 3, Name: "Charlie", Section: "back", GWU: true},
-			4: {ID: 4, Name: "Delta", Section: "weapon", GWU: true},
-			5: {ID: 5, Name: "Echo", Section: "weapon"},
-			6: {ID: 6, Name: "Gem Store Only", Section: "armor", GWU: true}, // no tradeable item
+		Skins: map[Key]Skin{
+			sk(1): {ID: sk(1), Name: "Alpha", Section: "weapon", GWU: true},
+			sk(2): {ID: sk(2), Name: "Bravo", Section: "armor", GWU: true},
+			sk(3): {ID: sk(3), Name: "Charlie", Section: "back", GWU: true},
+			sk(4): {ID: sk(4), Name: "Delta", Section: "weapon", GWU: true},
+			sk(5): {ID: sk(5), Name: "Echo", Section: "weapon"},
+			sk(6): {ID: sk(6), Name: "Gem Store Only", Section: "armor", GWU: true}, // no tradeable item
 		},
 		Items: map[int]Item{
-			10: {ID: 10, Name: "Alpha Sword", Skins: []int{1}},
-			11: {ID: 11, Name: "Alpha Sword of Air", Skins: []int{1}},
-			20: {ID: 20, Name: "Bravo Coat", Skins: []int{2}},
-			30: {ID: 30, Name: "Box", Skins: []int{3, 4}},
-			40: {ID: 40, Name: "Delta Axe", Skins: []int{4}},
-			50: {ID: 50, Name: "Echo Staff", Skins: []int{5}},
+			10: {ID: 10, Name: "Alpha Sword", Skins: []Key{sk(1)}},
+			11: {ID: 11, Name: "Alpha Sword of Air", Skins: []Key{sk(1)}},
+			20: {ID: 20, Name: "Bravo Coat", Skins: []Key{sk(2)}},
+			30: {ID: 30, Name: "Box", Skins: []Key{sk(3), sk(4)}},
+			40: {ID: 40, Name: "Delta Axe", Skins: []Key{sk(4)}},
+			50: {ID: 50, Name: "Echo Staff", Skins: []Key{sk(5)}},
 		},
 	}
 }
+
+func sk(id int) Key { return SkinKey(id) }
 
 func price(id, buy, sell int) Price {
 	return Price{ItemID: id, BuyPrice: buy, BuyQuantity: 10, SellPrice: sell, SellQuantity: 10}
@@ -35,7 +37,7 @@ func price(id, buy, sell int) Price {
 
 func TestCheapestPicksCheapestItemPerSkinAndSorts(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{},
+		Owned: map[Key]bool{},
 		Prices: map[int]Price{
 			10: price(10, 500, 600),
 			11: price(11, 300, 900), // cheaper buy price wins for skin 1
@@ -48,7 +50,7 @@ func TestCheapestPicksCheapestItemPerSkinAndSorts(t *testing.T) {
 
 	var got []int
 	for _, r := range v.Cheapest {
-		got = append(got, r.Skin.ID)
+		got = append(got, r.Skin.ID.ID)
 	}
 	// Delta (50) < Bravo (200) < Alpha (300) < Charlie (1000). Echo is not GWU.
 	if want := []int{4, 2, 1, 3}; !slices.Equal(got, want) {
@@ -76,7 +78,7 @@ func TestCheapestPicksCheapestItemPerSkinAndSorts(t *testing.T) {
 
 func TestCheapestExcludesOwnedAndUnpricedAndLimits(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{4: true},
+		Owned: map[Key]bool{sk(4): true},
 		Prices: map[int]Price{
 			10: price(10, 300, 400),
 			20: price(20, 0, 0), // nothing on the market
@@ -85,7 +87,7 @@ func TestCheapestExcludesOwnedAndUnpricedAndLimits(t *testing.T) {
 		},
 	}
 	v := BuildView(testCatalog(), snap, 1)
-	if len(v.Cheapest) != 1 || v.Cheapest[0].Skin.ID != 1 {
+	if len(v.Cheapest) != 1 || v.Cheapest[0].Skin.ID != sk(1) {
 		t.Fatalf("cheapest = %+v", v.Cheapest)
 	}
 	if v.GWUOwned != 1 {
@@ -95,7 +97,7 @@ func TestCheapestExcludesOwnedAndUnpricedAndLimits(t *testing.T) {
 
 func TestOrderStatuses(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{},
+		Owned: map[Key]bool{},
 		Orders: []Order{
 			{ID: 1, ItemID: 40, Price: 50, Quantity: 1},  // top
 			{ID: 2, ItemID: 10, Price: 300, Quantity: 1}, // tied: 3 wanted at 300, we want 1
@@ -111,7 +113,7 @@ func TestOrderStatuses(t *testing.T) {
 	v := BuildView(testCatalog(), snap, 25)
 	status := map[int]Row{}
 	for _, r := range v.Cheapest {
-		status[r.Skin.ID] = r
+		status[r.Skin.ID.ID] = r
 	}
 	if s := status[4].Status; s != StatusTop {
 		t.Errorf("skin 4 status = %v, want top", s)
@@ -130,7 +132,7 @@ func TestOrderStatuses(t *testing.T) {
 
 func TestTopWhenAllTopQuantityIsOurs(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{},
+		Owned: map[Key]bool{},
 		// Two of our own orders at the same price make up the whole top of the book.
 		Orders: []Order{
 			{ID: 1, ItemID: 40, Price: 50, Quantity: 1},
@@ -148,7 +150,7 @@ func TestTopWhenAllTopQuantityIsOurs(t *testing.T) {
 
 func TestOthersRedundantAndIgnoredOrders(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{2: true},
+		Owned: map[Key]bool{sk(2): true},
 		Orders: []Order{
 			{ID: 1, ItemID: 30, Price: 900, Quantity: 1},  // skin 3/4: outside limit, outbid
 			{ID: 2, ItemID: 50, Price: 100, Quantity: 1},  // non-GWU skin 5: top
@@ -167,13 +169,13 @@ func TestOthersRedundantAndIgnoredOrders(t *testing.T) {
 	}
 	v := BuildView(testCatalog(), snap, 1)
 
-	if len(v.Cheapest) != 1 || v.Cheapest[0].Skin.ID != 1 || v.Cheapest[0].Status != StatusTop {
+	if len(v.Cheapest) != 1 || v.Cheapest[0].Skin.ID != sk(1) || v.Cheapest[0].Status != StatusTop {
 		t.Fatalf("cheapest = %+v", v.Cheapest)
 	}
 	// Box order 1 covers skins 3 and 4, both outside the limit; Echo order 2 is top.
 	var others []int
 	for _, r := range v.Others {
-		others = append(others, r.Skin.ID)
+		others = append(others, r.Skin.ID.ID)
 	}
 	// Outbid rows first (3 then 4 by cost), then the top bid on skin 5.
 	if want := []int{3, 4, 5}; !slices.Equal(others, want) {
@@ -196,7 +198,7 @@ func TestOthersRedundantAndIgnoredOrders(t *testing.T) {
 
 func TestUnknownPrice(t *testing.T) {
 	snap := Snapshot{
-		Owned:  map[int]bool{},
+		Owned:  map[Key]bool{},
 		Orders: []Order{{ID: 1, ItemID: 50, Price: 100, Quantity: 1}},
 		Prices: map[int]Price{},
 	}
@@ -208,7 +210,7 @@ func TestUnknownPrice(t *testing.T) {
 
 func TestRowStatusShowsMostUrgentOrder(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{},
+		Owned: map[Key]bool{},
 		Orders: []Order{
 			{ID: 1, ItemID: 10, Price: 500, Quantity: 1}, // top
 			{ID: 2, ItemID: 11, Price: 100, Quantity: 1}, // outbid
@@ -220,14 +222,14 @@ func TestRowStatusShowsMostUrgentOrder(t *testing.T) {
 		},
 	}
 	v := BuildView(testCatalog(), snap, 1)
-	if len(v.Others) != 1 || v.Others[0].Skin.ID != 1 || v.Others[0].Status != StatusOutbid {
+	if len(v.Others) != 1 || v.Others[0].Skin.ID != sk(1) || v.Others[0].Status != StatusOutbid {
 		t.Fatalf("others = %+v, want skin 1 outbid", v.Others)
 	}
 }
 
 func TestDeliveryBoxSkins(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{3: true},
+		Owned: map[Key]bool{sk(3): true},
 		Prices: map[int]Price{
 			10: price(10, 300, 400),
 			20: price(20, 50, 60),
@@ -243,16 +245,16 @@ func TestDeliveryBoxSkins(t *testing.T) {
 	if len(v.Delivery) != 2 {
 		t.Fatalf("delivery = %+v", v.Delivery)
 	}
-	if d := v.Delivery[0]; d.Item.ID != 20 || d.Count != 2 || len(d.Skins) != 1 || d.Skins[0].ID != 2 {
+	if d := v.Delivery[0]; d.Item.ID != 20 || d.Count != 2 || len(d.Skins) != 1 || d.Skins[0].ID != sk(2) {
 		t.Errorf("first delivery row = %+v, want the helm", d)
 	}
-	if d := v.Delivery[1]; d.Item.ID != 30 || len(d.Skins) != 1 || d.Skins[0].ID != 4 {
+	if d := v.Delivery[1]; d.Item.ID != 30 || len(d.Skins) != 1 || d.Skins[0].ID != sk(4) {
 		t.Errorf("box row = %+v, want only the locked skin 4", d)
 	}
 	// Bought skins leave the cheapest list; only Alpha (skin 1) remains.
 	var cheapest []int
 	for _, r := range v.Cheapest {
-		cheapest = append(cheapest, r.Skin.ID)
+		cheapest = append(cheapest, r.Skin.ID.ID)
 	}
 	if !slices.Equal(cheapest, []int{1}) {
 		t.Errorf("cheapest = %v, want [1]", cheapest)
@@ -261,7 +263,7 @@ func TestDeliveryBoxSkins(t *testing.T) {
 
 func TestOrdersOnBoughtSkinsAreRedundant(t *testing.T) {
 	snap := Snapshot{
-		Owned: map[int]bool{},
+		Owned: map[Key]bool{},
 		Orders: []Order{
 			{ID: 1, ItemID: 11, Price: 5, Quantity: 1},   // skin 1, bought via item 10: redundant
 			{ID: 2, ItemID: 20, Price: 50, Quantity: 1},  // leftover of a part-filled order: redundant
@@ -285,10 +287,68 @@ func TestOrdersOnBoughtSkinsAreRedundant(t *testing.T) {
 	if !slices.Equal(redundant, []int{1, 2}) {
 		t.Errorf("redundant orders = %v, want [1 2]", redundant)
 	}
-	if len(v.Others) != 1 || v.Others[0].Skin.ID != 3 {
+	if len(v.Others) != 1 || v.Others[0].Skin.ID != sk(3) {
 		t.Fatalf("others = %+v, want only skin 3", v.Others)
 	}
 	if v.OthersCost != 1000 {
 		t.Errorf("OthersCost = %d, want 1000", v.OthersCost)
+	}
+}
+
+func TestFinishersAndMinisAreTrackedLikeSkins(t *testing.T) {
+	c := testCatalog()
+	watchwork, ownedFinisher, tigris := FinisherKey(24), FinisherKey(25), MiniKey(863)
+	// Skin 24 shares the finisher's API id; keys keep them apart.
+	c.Skins[sk(24)] = Skin{ID: sk(24), Name: "Skin 24", Section: "weapon"}
+	c.Skins[watchwork] = Skin{ID: watchwork, Name: "Twisted Watchwork Finisher", Section: "finisher", GWU: true}
+	c.Skins[ownedFinisher] = Skin{ID: ownedFinisher, Name: "Owned Finisher", Section: "finisher", GWU: true}
+	c.Skins[tigris] = Skin{ID: tigris, Name: "Mini Black Tigris Cub", Section: "mini", GWU: true}
+	c.Skins[MiniKey(1)] = Skin{ID: MiniKey(1), Name: "Mini Not GWU", Section: "mini"}
+	c.Items[60] = Item{ID: 60, Name: "Permanent Twisted Watchwork Finisher", Skins: []Key{watchwork}}
+	c.Items[70] = Item{ID: 70, Name: "Permanent Owned Finisher", Skins: []Key{ownedFinisher}}
+	c.Items[80] = Item{ID: 80, Name: "Mini Black Tigris Cub", Skins: []Key{tigris}}
+	c.Items[90] = Item{ID: 90, Name: "Mini Not GWU", Skins: []Key{MiniKey(1)}}
+	snap := Snapshot{
+		Owned:  map[Key]bool{sk(24): true, ownedFinisher: true},
+		Orders: []Order{{ID: 1, ItemID: 60, Price: 5, Quantity: 1}, {ID: 2, ItemID: 70, Price: 5, Quantity: 1}},
+		Prices: map[int]Price{40: price(40, 50, 60), 60: price(60, 5, 9), 70: price(70, 5, 9), 80: price(80, 7, 9), 90: price(90, 1, 2)},
+	}
+	v := BuildView(c, snap, 3)
+	var got []Key
+	for _, r := range v.Cheapest {
+		got = append(got, r.Skin.ID)
+	}
+	// Mixed in by cost; the non-GWU mini is left out.
+	if want := []Key{watchwork, tigris, sk(4)}; !slices.Equal(got, want) {
+		t.Fatalf("cheapest = %v, want %v", got, want)
+	}
+	if v.Cheapest[0].Status != StatusTop {
+		t.Errorf("finisher status = %v, want top", v.Cheapest[0].Status)
+	}
+	if len(v.Redundant) != 1 || v.Redundant[0].ItemID != 70 {
+		t.Errorf("redundant = %+v, want the order on the owned finisher", v.Redundant)
+	}
+	if v.OtherOrders != 0 {
+		t.Errorf("other orders = %d, finisher orders should be tracked", v.OtherOrders)
+	}
+	// Skins 1-4, both finishers and the GWU mini have a tradeable item; one is owned.
+	if v.GWUTotal != 7 || v.GWUOwned != 1 {
+		t.Errorf("gwu = %d / %d, want 1 / 7", v.GWUOwned, v.GWUTotal)
+	}
+	cands := PriceCandidates(c, snap)
+	if !slices.Contains(cands, 80) || slices.Contains(cands, 90) || slices.Contains(cands, 70) || slices.Contains(cands, 60) {
+		t.Errorf("candidates = %v: want the GWU mini, not the non-GWU mini, owned finisher or item with an order", cands)
+	}
+
+	// Bought: the finisher's item is in the delivery box.
+	snap.Orders, snap.Delivery = nil, map[int]int{60: 1}
+	v = BuildView(c, snap, 10)
+	if len(v.Delivery) != 1 || v.Delivery[0].Skins[0].ID != watchwork {
+		t.Errorf("delivery = %+v", v.Delivery)
+	}
+	for _, r := range v.Cheapest {
+		if r.Skin.ID == watchwork {
+			t.Error("a bought finisher should not be in the cheapest list")
+		}
 	}
 }

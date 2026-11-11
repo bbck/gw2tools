@@ -38,6 +38,52 @@ func TestAccountSkinsSendsKey(t *testing.T) {
 	}
 }
 
+func TestFinishers(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/account/finishers":
+			if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+				t.Errorf("Authorization = %q", got)
+			}
+			w.Write([]byte(`[{"id":24,"permanent":true},{"id":7,"permanent":false,"quantity":3}]`))
+		case "/v2/finishers":
+			if got := r.URL.Query().Get("ids"); got != "all" {
+				t.Errorf("ids = %q", got)
+			}
+			w.Write([]byte(`[{"id":24,"name":"Twisted Watchwork Finisher","unlock_items":[44601]},{"id":1,"name":"Rabbit Finisher"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	owned, err := c.AccountFinishers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owned) != 2 || owned[0] != (AccountFinisher{ID: 24, Permanent: true}) || owned[1].Permanent {
+		t.Errorf("account finishers = %+v", owned)
+	}
+	all, err := c.Finishers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].Name != "Twisted Watchwork Finisher" || len(all[0].UnlockItems) != 1 || all[0].UnlockItems[0] != 44601 {
+		t.Errorf("finishers = %+v", all)
+	}
+}
+
+func TestAccountMinis(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/account/minis" || r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("request = %s, Authorization %q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Write([]byte(`[1,863]`))
+	})
+	owned, err := c.AccountMinis(context.Background())
+	if err != nil || len(owned) != 2 || owned[1] != 863 {
+		t.Errorf("account minis = %v, %v", owned, err)
+	}
+}
+
 func TestAuthRequiresKey(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("request should not be sent without a key")
@@ -130,14 +176,15 @@ func TestItemsDecodesSkins(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[
 			{"id":1,"name":"Sword","type":"Weapon","rarity":"Rare","default_skin":5232,"details":{"type":"Sword"}},
-			{"id":2,"name":"Unlock","type":"Consumable","rarity":"Exotic","details":{"type":"Transmutation","skins":[7,8]}}
+			{"id":2,"name":"Unlock","type":"Consumable","rarity":"Exotic","details":{"type":"Transmutation","skins":[7,8]}},
+			{"id":98084,"name":"Mini Black Tigris Cub","type":"MiniPet","rarity":"Rare","details":{"minipet_id":863}}
 		]`))
 	})
-	items, err := c.Items(context.Background(), []int{1, 2})
+	items, err := c.Items(context.Background(), []int{1, 2, 98084})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if items[0].DefaultSkin != 5232 || len(items[1].Details.Skins) != 2 {
+	if items[0].DefaultSkin != 5232 || len(items[1].Details.Skins) != 2 || items[2].Details.MinipetID != 863 {
 		t.Fatalf("items = %+v", items)
 	}
 }

@@ -101,7 +101,7 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 	locked, delivery := c.locked(snap)
 	v.Delivery = delivery
 
-	var ordersBySkin map[int][]OrderRow
+	var ordersBySkin map[Key][]OrderRow
 	ordersBySkin, v.Redundant, v.OtherOrders = groupOrders(c, snap, locked)
 
 	var candidates []Row
@@ -126,7 +126,7 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
 	}
-	inCheapest := map[int]bool{}
+	inCheapest := map[Key]bool{}
 	for i := range candidates {
 		candidates[i].Rank = i + 1
 		v.CheapestCost += candidates[i].Cost
@@ -152,14 +152,14 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 // groupOrders rates our orders and groups them by the locked skins their items
 // unlock. redundant are orders whose skins are all unlocked or bought; other counts
 // orders on items that unlock no skin.
-func groupOrders(c Catalog, snap Snapshot, locked func(int) bool) (bySkin map[int][]OrderRow, redundant []OrderRow, other int) {
+func groupOrders(c Catalog, snap Snapshot, locked func(Key) bool) (bySkin map[Key][]OrderRow, redundant []OrderRow, other int) {
 	// Quantity we are bidding per item and price, to tell "top" from "tied".
 	type itemPrice struct{ item, price int }
 	ourQty := map[itemPrice]int{}
 	for _, o := range snap.Orders {
 		ourQty[itemPrice{o.ItemID, o.Price}] += o.Quantity
 	}
-	bySkin = map[int][]OrderRow{}
+	bySkin = map[Key][]OrderRow{}
 	for _, o := range snap.Orders {
 		it, ok := c.Items[o.ItemID]
 		if !ok {
@@ -167,7 +167,7 @@ func groupOrders(c Catalog, snap Snapshot, locked func(int) bool) (bySkin map[in
 			continue
 		}
 		or := orderRow(o, it, snap.Prices, ourQty[itemPrice{o.ItemID, o.Price}])
-		var wanted []int
+		var wanted []Key
 		for _, s := range it.Skins {
 			if _, known := c.Skins[s]; known && locked(s) {
 				wanted = append(wanted, s)
@@ -191,8 +191,8 @@ func groupOrders(c Catalog, snap Snapshot, locked func(int) bool) (bySkin map[in
 // A skin with an item in the delivery box counts as bought, because collecting the
 // item unlocks it. Every "is this skin still wanted" check goes through locked.
 // delivery lists the delivery box items that unlock a locked GWU skin.
-func (c Catalog) locked(snap Snapshot) (locked func(skin int) bool, delivery []DeliveryRow) {
-	bought := map[int]bool{}
+func (c Catalog) locked(snap Snapshot) (locked func(Key) bool, delivery []DeliveryRow) {
+	bought := map[Key]bool{}
 	for itemID, count := range snap.Delivery {
 		it, ok := c.Items[itemID]
 		if !ok {
@@ -216,11 +216,11 @@ func (c Catalog) locked(snap Snapshot) (locked func(skin int) bool, delivery []D
 	slices.SortFunc(delivery, func(a, b DeliveryRow) int {
 		return cmp.Or(cmp.Compare(a.Skins[0].Name, b.Skins[0].Name), cmp.Compare(a.Item.ID, b.Item.ID))
 	})
-	return func(skin int) bool { return !snap.Owned[skin] && !bought[skin] }, delivery
+	return func(skin Key) bool { return !snap.Owned[skin] && !bought[skin] }, delivery
 }
 
 func byCost(a, b Row) int {
-	return cmp.Or(cmp.Compare(a.Cost, b.Cost), cmp.Compare(a.Skin.Name, b.Skin.Name), cmp.Compare(a.Skin.ID, b.Skin.ID))
+	return cmp.Or(cmp.Compare(a.Cost, b.Cost), cmp.Compare(a.Skin.Name, b.Skin.Name), compareKeys(a.Skin.ID, b.Skin.ID))
 }
 
 // skinRow picks the cheapest priced item for the skin. ok is false when no item

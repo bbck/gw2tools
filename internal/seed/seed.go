@@ -1,4 +1,4 @@
-// Package seed builds the static skin catalogue. It does bulk API work and is only
+// Package seed builds the static skin, finisher and mini catalogue. It does bulk API work and is only
 // ever run by hand (gw2tools seed), never by the server.
 package seed
 
@@ -24,8 +24,14 @@ import (
 // records which skins the Guaranteed Wardrobe Unlock can give.
 const DefaultContentURL = "https://immortius.xyz/wardrobe-unlock-analyser/data/content.json"
 
-// sections are the analyser sections that are wardrobe skins (/v2/account/skins).
-var sections = []string{"armor", "weapon", "back"}
+// sections maps the analyser sections the catalogue holds to their kind of unlock.
+var sections = map[string]wardrobe.Kind{
+	"armor":    wardrobe.KindSkin,
+	"weapon":   wardrobe.KindSkin,
+	"back":     wardrobe.KindSkin,
+	"finisher": wardrobe.KindFinisher,
+	"mini":     wardrobe.KindMini,
+}
 
 type content struct {
 	Items []struct {
@@ -44,16 +50,17 @@ type content struct {
 	} `json:"items"`
 }
 
-// ParseContent reads the analyser's content.json and returns the skins in sections,
-// flagging those it marks as Guaranteed Wardrobe Unlock drops.
-func ParseContent(r io.Reader) (map[int]wardrobe.Skin, error) {
+// ParseContent reads the analyser's content.json and returns the skins, finishers and
+// minis in sections, flagging those it marks as Guaranteed Wardrobe Unlock drops.
+func ParseContent(r io.Reader) (map[wardrobe.Key]wardrobe.Skin, error) {
 	var c content
 	if err := json.NewDecoder(r).Decode(&c); err != nil {
 		return nil, fmt.Errorf("decoding content: %w", err)
 	}
-	skins := map[int]wardrobe.Skin{}
+	skins := map[wardrobe.Key]wardrobe.Skin{}
 	for _, sec := range c.Items {
-		if !slices.Contains(sections, sec.ID) {
+		kind, ok := sections[sec.ID]
+		if !ok {
 			continue
 		}
 		for _, cat := range sec.Categories {
@@ -63,8 +70,9 @@ func ParseContent(r io.Reader) (map[int]wardrobe.Skin, error) {
 					if err != nil {
 						return nil, fmt.Errorf("%s skin id %q: %w", sec.ID, u.ID, err)
 					}
-					skins[id] = wardrobe.Skin{
-						ID:      id,
+					key := wardrobe.Key{Kind: kind, ID: id}
+					skins[key] = wardrobe.Skin{
+						ID:      key,
 						Name:    u.Name,
 						Section: sec.ID,
 						Type:    u.Type,
@@ -81,13 +89,24 @@ func ParseContent(r io.Reader) (map[int]wardrobe.Skin, error) {
 	return skins, nil
 }
 
-// MapItems keeps the items that unlock a known skin, either as their default skin or
-// through a skin list (e.g. transmutation and unlock consumables).
-func MapItems(items []gw2.Item, skins map[int]wardrobe.Skin) map[int]wardrobe.Item {
+// MapItems keeps the items that unlock a known skin (their default skin, or a skin list
+// as on transmutation and unlock consumables), mini (a MiniPet item's minipet_id), or
+// finisher (which names its unlock items, as items don't name their finisher).
+func MapItems(items []gw2.Item, skins map[wardrobe.Key]wardrobe.Skin, finishers []gw2.Finisher) map[int]wardrobe.Item {
+	finisherItems := map[int][]wardrobe.Key{}
+	for _, f := range finishers {
+		for _, it := range f.UnlockItems {
+			finisherItems[it] = append(finisherItems[it], wardrobe.FinisherKey(f.ID))
+		}
+	}
 	out := map[int]wardrobe.Item{}
 	for _, it := range items {
-		var unlocks []int
-		for _, id := range append([]int{it.DefaultSkin}, it.Details.Skins...) {
+		var unlocks []wardrobe.Key
+		ids := append([]wardrobe.Key{wardrobe.SkinKey(it.DefaultSkin), wardrobe.MiniKey(it.Details.MinipetID)}, finisherItems[it.ID]...)
+		for _, id := range it.Details.Skins {
+			ids = append(ids, wardrobe.SkinKey(id))
+		}
+		for _, id := range ids {
 			if _, ok := skins[id]; ok && !slices.Contains(unlocks, id) {
 				unlocks = append(unlocks, id)
 			}
@@ -114,6 +133,7 @@ type API interface {
 	AchievementCategory(ctx context.Context, id int) ([]int, error)
 	Achievements(ctx context.Context, ids []int) ([]gw2.Achievement, error)
 	Skins(ctx context.Context, ids []int) ([]gw2.Skin, error)
+	Finishers(ctx context.Context) ([]gw2.Finisher, error)
 }
 
 // Sets reads the Black Lion weapon sets: the achievements in BlackLionCategory whose
@@ -149,11 +169,11 @@ func Sets(ctx context.Context, api API, log *slog.Logger) ([]wardrobe.Set, error
 
 // addSetSkins adds set skins the analyser does not list (e.g. a set newer than its
 // data) to skins, from /v2/skins. Skins the API does not know are dropped from their set.
-func addSetSkins(ctx context.Context, api API, sets []wardrobe.Set, skins map[int]wardrobe.Skin, log *slog.Logger) error {
+func addSetSkins(ctx context.Context, api API, sets []wardrobe.Set, skins map[wardrobe.Key]wardrobe.Skin, log *slog.Logger) error {
 	var missing []int
 	for _, set := range sets {
 		for _, id := range set.Skins {
-			if _, ok := skins[id]; !ok {
+			if _, ok := skins[wardrobe.SkinKey(id)]; !ok {
 				missing = append(missing, id)
 			}
 		}
@@ -167,8 +187,8 @@ func addSetSkins(ctx context.Context, api API, sets []wardrobe.Set, skins map[in
 		return fmt.Errorf("fetching set skins: %w", err)
 	}
 	for _, sk := range found {
-		skins[sk.ID] = wardrobe.Skin{
-			ID:      sk.ID,
+		skins[wardrobe.SkinKey(sk.ID)] = wardrobe.Skin{
+			ID:      wardrobe.SkinKey(sk.ID),
 			Name:    sk.Name,
 			Section: strings.ToLower(sk.Type),
 			Type:    cmp.Or(weaponTypes[sk.Details.Type], sk.Details.Type),
@@ -177,7 +197,7 @@ func addSetSkins(ctx context.Context, api API, sets []wardrobe.Set, skins map[in
 	}
 	for i := range sets {
 		sets[i].Skins = slices.DeleteFunc(sets[i].Skins, func(id int) bool {
-			_, ok := skins[id]
+			_, ok := skins[wardrobe.SkinKey(id)]
 			if !ok {
 				log.Warn("dropping unknown skin from set", "set", sets[i].Name, "skin", id)
 			}
@@ -193,8 +213,8 @@ type Catalog interface {
 }
 
 // Run builds the catalogue from the analyser content at contentSrc (a URL or file
-// path), the Black Lion weapon sets, and every tradeable item's details, then replaces
-// the stored catalogue.
+// path), the Black Lion weapon sets, the finishers, and every tradeable item's
+// details, then replaces the stored catalogue.
 func Run(ctx context.Context, api API, dst Catalog, contentSrc string, log *slog.Logger) error {
 	log.Info("loading skins", "source", contentSrc)
 	rc, err := open(ctx, contentSrc)
@@ -206,13 +226,15 @@ func Run(ctx context.Context, api API, dst Catalog, contentSrc string, log *slog
 	if err != nil {
 		return err
 	}
+	kinds := map[wardrobe.Kind]int{}
 	gwu := 0
 	for _, s := range skins {
+		kinds[s.ID.Kind]++
 		if s.GWU {
 			gwu++
 		}
 	}
-	log.Info("loaded skins", "skins", len(skins), "gwu", gwu)
+	log.Info("loaded skins", "kinds", kinds, "gwu", gwu)
 
 	sets, err := Sets(ctx, api, log)
 	if err != nil {
@@ -231,6 +253,12 @@ func Run(ctx context.Context, api API, dst Catalog, contentSrc string, log *slog
 		return err
 	}
 	log.Info("loaded black lion weapon sets", "sets", len(sets))
+
+	// One request; items don't name the finisher they unlock, so finishers name their items.
+	finishers, err := api.Finishers(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching finishers: %w", err)
+	}
 
 	ids, err := api.CommerceItemIDs(ctx)
 	if err != nil {
@@ -251,7 +279,7 @@ func Run(ctx context.Context, api API, dst Catalog, contentSrc string, log *slog
 		log.Info("progress", "done", done, "of", len(ids))
 	}
 
-	c := wardrobe.Catalog{Skins: skins, Items: MapItems(all, skins), Sets: sets}
+	c := wardrobe.Catalog{Skins: skins, Items: MapItems(all, skins, finishers), Sets: sets}
 	log.Info("saving catalogue", "skins", len(c.Skins), "items", len(c.Items), "sets", len(c.Sets))
 	return dst.ReplaceCatalog(ctx, c)
 }

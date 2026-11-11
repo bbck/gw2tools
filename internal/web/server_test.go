@@ -43,6 +43,7 @@ var (
 	fakeListings = map[int]gw2.Listing{
 		10: {ID: 10, Buys: []gw2.ListingEntry{{UnitPrice: 150, Quantity: 4}}, Sells: []gw2.ListingEntry{{UnitPrice: 12345, Quantity: 1}}},
 		30: {ID: 30, Buys: []gw2.ListingEntry{{UnitPrice: 99, Quantity: 1}}, Sells: []gw2.ListingEntry{{UnitPrice: 200, Quantity: 1}}},
+		60: {ID: 60, Buys: []gw2.ListingEntry{{UnitPrice: 900, Quantity: 1}}, Sells: []gw2.ListingEntry{{UnitPrice: 2000, Quantity: 1}}},
 	}
 )
 
@@ -62,10 +63,18 @@ func (f *fakeAPI) AccountSkins(context.Context) ([]int, error) {
 	return f.ownedSkins, nil
 }
 
+// Finisher 25 is unlocked; finisher 24 is not.
+func (f *fakeAPI) AccountFinishers(context.Context) ([]gw2.AccountFinisher, error) {
+	return []gw2.AccountFinisher{{ID: 25, Permanent: true}, {ID: 24}}, nil
+}
+
+func (f *fakeAPI) AccountMinis(context.Context) ([]int, error) { return []int{7}, nil }
+
 func (f *fakeAPI) CurrentBuys(context.Context) ([]gw2.Transaction, error) {
 	return []gw2.Transaction{
 		{ID: 1, ItemID: 10, Price: 140, Quantity: 1}, // outbid on Flame Blade
 		{ID: 2, ItemID: 30, Price: 99, Quantity: 1},  // skin 3 already owned
+		{ID: 3, ItemID: 60, Price: 900, Quantity: 1}, // top bid on the watchwork finisher
 	}, nil
 }
 
@@ -84,6 +93,15 @@ func (f *fakeAPI) Listings(_ context.Context, ids []int) ([]gw2.Listing, error) 
 	return pick(fakeListings, ids), nil
 }
 
+// skins keys a catalogue's skins by their ids.
+func skins(list ...wardrobe.Skin) map[wardrobe.Key]wardrobe.Skin {
+	out := map[wardrobe.Key]wardrobe.Skin{}
+	for _, sk := range list {
+		out[sk.ID] = sk
+	}
+	return out
+}
+
 func openStore(t *testing.T, seed bool) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "web.db"))
@@ -93,15 +111,21 @@ func openStore(t *testing.T, seed bool) *store.Store {
 	t.Cleanup(func() { st.Close() })
 	if seed {
 		err := st.ReplaceCatalog(context.Background(), wardrobe.Catalog{
-			Skins: map[int]wardrobe.Skin{
-				1: {ID: 1, Name: "Flame Blade", Section: "weapon", Type: "Sword", GWU: true},
-				2: {ID: 2, Name: "Cheap Helm", Section: "armor", Type: "Helm", GWU: true},
-				3: {ID: 3, Name: "Owned Cape", Section: "back", Type: "Back", GWU: true},
-			},
+			Skins: skins(
+				wardrobe.Skin{ID: wardrobe.SkinKey(1), Name: "Flame Blade", Section: "weapon", Type: "Sword", GWU: true},
+				wardrobe.Skin{ID: wardrobe.SkinKey(2), Name: "Cheap Helm", Section: "armor", Type: "Helm", GWU: true},
+				wardrobe.Skin{ID: wardrobe.SkinKey(3), Name: "Owned Cape", Section: "back", Type: "Back", GWU: true},
+				wardrobe.Skin{ID: wardrobe.FinisherKey(24), Name: "Twisted Watchwork Finisher", Section: "finisher", GWU: true},
+				wardrobe.Skin{ID: wardrobe.FinisherKey(25), Name: "Owned Finisher", Section: "finisher", GWU: true},
+				wardrobe.Skin{ID: wardrobe.MiniKey(7), Name: "Owned Mini", Section: "mini", GWU: true},
+			),
 			Items: map[int]wardrobe.Item{
-				10: {ID: 10, Name: "Carrion Flame Blade", Skins: []int{1}},
-				20: {ID: 20, Name: "Cheap <Helm>", Skins: []int{2}},
-				30: {ID: 30, Name: "Owned Cape Item", Skins: []int{3}},
+				10: {ID: 10, Name: "Carrion Flame Blade", Skins: []wardrobe.Key{wardrobe.SkinKey(1)}},
+				20: {ID: 20, Name: "Cheap <Helm>", Skins: []wardrobe.Key{wardrobe.SkinKey(2)}},
+				30: {ID: 30, Name: "Owned Cape Item", Skins: []wardrobe.Key{wardrobe.SkinKey(3)}},
+				60: {ID: 60, Name: "Permanent Twisted Watchwork Finisher", Skins: []wardrobe.Key{wardrobe.FinisherKey(24)}},
+				50: {ID: 50, Name: "Permanent Owned Finisher", Skins: []wardrobe.Key{wardrobe.FinisherKey(25)}},
+				70: {ID: 70, Name: "Owned Mini", Skins: []wardrobe.Key{wardrobe.MiniKey(7)}},
 			},
 			Sets: []wardrobe.Set{{ID: 500, Name: "Flame & Cape", Skins: []int{1, 3}}},
 		})
@@ -150,9 +174,10 @@ func TestWardrobePage(t *testing.T) {
 		`<span class="badge outbid">Outbid</span>`,
 		`<span class="g">1</span><span class="s">23</span><span class="c">45</span>`, // 12345 copper
 		"Owned Cape Item", // redundant order
-		"unlocked: <strong>1</strong> / 3",
-		`data-copy="Carrion Flame Blade"`, // copy button holds the item name
-		`data-copy="Cheap &lt;Helm&gt;"`,  // escaped in the attribute too
+		"Tradeable Guaranteed Wardrobe Unlocks: <strong>3</strong> / 6", // owned cape, finisher and mini
+		`data-copy="Permanent Twisted Watchwork Finisher"`,              // finisher order is tracked
+		`data-copy="Carrion Flame Blade"`,                               // copy button holds the item name
+		`data-copy="Cheap &lt;Helm&gt;"`,                                // escaped in the attribute too
 		`<meta http-equiv="refresh" content="60">`,
 		`<title>Wardrobe Unlocks · gw2tools</title>`,
 		`<a href="/wardrobe" class="active">Wardrobe Unlocks</a>`,
@@ -181,9 +206,9 @@ func TestWardrobeLimit(t *testing.T) {
 		t.Error("limit not applied to heading")
 	}
 	// Flame Blade drops out of the cheapest list but its order shows under others.
-	others := body[strings.Index(body, "Other orders on missing skins"):]
-	// The blade's cheapest item has a 150c top bid.
-	if !strings.Contains(others, `total <span class="coins"><span class="s">1</span><span class="c">50</span></span>`) {
+	others := body[strings.Index(body, "Other orders on missing unlocks"):]
+	// The blade's cheapest item has a 150c top bid, the finisher's 900c.
+	if !strings.Contains(others, `total <span class="coins"><span class="s">10</span><span class="c">50</span></span>`) {
 		t.Error("other orders heading should show its total")
 	}
 	if !strings.Contains(others, "Carrion Flame Blade") {
@@ -256,7 +281,7 @@ func TestNewSkinUnlockStopsPricing(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap, _ := srv.store.LoadSnapshot(ctx)
-	if !snap.Owned[2] || !snap.Owned[3] {
+	if !snap.Owned[wardrobe.SkinKey(2)] || !snap.Owned[wardrobe.SkinKey(3)] || !snap.Owned[wardrobe.MiniKey(7)] {
 		t.Errorf("owned = %v", snap.Owned)
 	}
 }
@@ -428,7 +453,7 @@ func TestSetsPageNeedsSeed(t *testing.T) {
 
 	// A catalogue seeded before sets existed asks for a re-seed.
 	st := openStore(t, false)
-	if err := st.ReplaceCatalog(context.Background(), wardrobe.Catalog{Skins: map[int]wardrobe.Skin{1: {ID: 1, Name: "x", Section: "weapon"}}}); err != nil {
+	if err := st.ReplaceCatalog(context.Background(), wardrobe.Catalog{Skins: skins(wardrobe.Skin{ID: wardrobe.SkinKey(1), Name: "x", Section: "weapon"})}); err != nil {
 		t.Fatal(err)
 	}
 	srv, _, _ = newTestServer(t, st)
@@ -440,10 +465,13 @@ func TestSetsPageNeedsSeed(t *testing.T) {
 func TestSetsPageWarnsAboutUnpricedSkins(t *testing.T) {
 	st := openStore(t, false)
 	err := st.ReplaceCatalog(context.Background(), wardrobe.Catalog{
-		Skins: map[int]wardrobe.Skin{1: {ID: 1, Name: "Priced Sword", Section: "weapon"}, 2: {ID: 2, Name: "New Axe", Section: "weapon"}},
+		Skins: skins(
+			wardrobe.Skin{ID: wardrobe.SkinKey(1), Name: "Priced Sword", Section: "weapon"},
+			wardrobe.Skin{ID: wardrobe.SkinKey(2), Name: "New Axe", Section: "weapon"},
+		),
 		Items: map[int]wardrobe.Item{
-			20: {ID: 20, Name: "Priced Sword Skin", Skins: []int{1}}, // in fakePrices
-			40: {ID: 40, Name: "New Axe Skin", Skins: []int{2}},      // not priced
+			20: {ID: 20, Name: "Priced Sword Skin", Skins: []wardrobe.Key{wardrobe.SkinKey(1)}}, // in fakePrices
+			40: {ID: 40, Name: "New Axe Skin", Skins: []wardrobe.Key{wardrobe.SkinKey(2)}},      // not priced
 		},
 		Sets: []wardrobe.Set{{ID: 1, Name: "Half Priced", Skins: []int{1, 2}}},
 	})

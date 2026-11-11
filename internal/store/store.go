@@ -68,12 +68,18 @@ func Open(path string) (*Store, error) {
 }
 
 // migrate applies migrations/NNN_*.sql in order, tracking progress in user_version.
-func migrate(db *sql.DB) error {
+func migrate(db *sql.DB) error { return migrateTo(db, -1) }
+
+// migrateTo applies migrations up to number last (all of them if last < 0).
+func migrateTo(db *sql.DB, last int) error {
 	names, err := fs.Glob(migrationFS, "migrations/*.sql")
 	if err != nil {
 		return err
 	}
 	slices.Sort(names)
+	if last >= 0 {
+		names = names[:min(last, len(names))]
+	}
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
@@ -108,7 +114,8 @@ func migrate(db *sql.DB) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// ReplaceCatalog swaps the seeded catalogue (skins, items and weapon sets) for a new one.
+// ReplaceCatalog swaps the seeded catalogue (skins, finishers, minis, items and weapon
+// sets) for a new one.
 func (s *Store) ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, q := range []string{"DELETE FROM weapon_set_skins", "DELETE FROM weapon_sets", "DELETE FROM item_skins", "DELETE FROM items", "DELETE FROM skins"} {
@@ -116,12 +123,12 @@ func (s *Store) ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error {
 				return err
 			}
 		}
-		skinStmt, err := tx.PrepareContext(ctx, "INSERT INTO skins (id, name, section, type, rarity, gwu) VALUES (?, ?, ?, ?, ?, ?)")
+		skinStmt, err := tx.PrepareContext(ctx, "INSERT INTO skins (kind, id, name, section, type, rarity, gwu) VALUES (?, ?, ?, ?, ?, ?, ?)")
 		if err != nil {
 			return err
 		}
 		for _, sk := range c.Skins {
-			if _, err := skinStmt.ExecContext(ctx, sk.ID, sk.Name, sk.Section, sk.Type, sk.Rarity, sk.GWU); err != nil {
+			if _, err := skinStmt.ExecContext(ctx, string(sk.ID.Kind), sk.ID.ID, sk.Name, sk.Section, sk.Type, sk.Rarity, sk.GWU); err != nil {
 				return err
 			}
 		}
@@ -129,7 +136,7 @@ func (s *Store) ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error {
 		if err != nil {
 			return err
 		}
-		linkStmt, err := tx.PrepareContext(ctx, "INSERT INTO item_skins (item_id, skin_id) VALUES (?, ?)")
+		linkStmt, err := tx.PrepareContext(ctx, "INSERT INTO item_skins (item_id, kind, skin_id) VALUES (?, ?, ?)")
 		if err != nil {
 			return err
 		}
@@ -138,8 +145,8 @@ func (s *Store) ReplaceCatalog(ctx context.Context, c wardrobe.Catalog) error {
 				return err
 			}
 			for _, sk := range it.Skins {
-				if _, err := linkStmt.ExecContext(ctx, it.ID, sk); err != nil {
-					return fmt.Errorf("linking item %d to skin %d: %w", it.ID, sk, err)
+				if _, err := linkStmt.ExecContext(ctx, it.ID, string(sk.Kind), sk.ID); err != nil {
+					return fmt.Errorf("linking item %d to %s %d: %w", it.ID, sk.Kind, sk.ID, err)
 				}
 			}
 		}
@@ -172,12 +179,12 @@ func (s *Store) WeaponSetCount(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// LoadCatalog reads the seeded skins, items and weapon sets.
+// LoadCatalog reads the seeded skins, finishers, minis, items and weapon sets.
 func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
-	c := wardrobe.Catalog{Skins: map[int]wardrobe.Skin{}, Items: map[int]wardrobe.Item{}}
-	err := each(ctx, s.db, "SELECT id, name, section, type, rarity, gwu FROM skins", nil, func(rows *sql.Rows) error {
+	c := wardrobe.Catalog{Skins: map[wardrobe.Key]wardrobe.Skin{}, Items: map[int]wardrobe.Item{}}
+	err := each(ctx, s.db, "SELECT kind, id, name, section, type, rarity, gwu FROM skins", nil, func(rows *sql.Rows) error {
 		var sk wardrobe.Skin
-		if err := rows.Scan(&sk.ID, &sk.Name, &sk.Section, &sk.Type, &sk.Rarity, &sk.GWU); err != nil {
+		if err := rows.Scan(&sk.ID.Kind, &sk.ID.ID, &sk.Name, &sk.Section, &sk.Type, &sk.Rarity, &sk.GWU); err != nil {
 			return err
 		}
 		c.Skins[sk.ID] = sk
@@ -197,13 +204,14 @@ func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
 	if err != nil {
 		return c, err
 	}
-	err = each(ctx, s.db, "SELECT item_id, skin_id FROM item_skins ORDER BY item_id, skin_id", nil, func(rows *sql.Rows) error {
-		var itemID, skinID int
-		if err := rows.Scan(&itemID, &skinID); err != nil {
+	err = each(ctx, s.db, "SELECT item_id, kind, skin_id FROM item_skins ORDER BY item_id, kind, skin_id", nil, func(rows *sql.Rows) error {
+		var itemID int
+		var key wardrobe.Key
+		if err := rows.Scan(&itemID, &key.Kind, &key.ID); err != nil {
 			return err
 		}
 		it := c.Items[itemID]
-		it.Skins = append(it.Skins, skinID)
+		it.Skins = append(it.Skins, key)
 		c.Items[itemID] = it
 		return nil
 	})
@@ -228,20 +236,26 @@ func (s *Store) LoadCatalog(ctx context.Context) (wardrobe.Catalog, error) {
 	return c, err
 }
 
-// SaveOrders records the result of an orders refresh: newly unlocked skins are added
-// (unlocks are never removed), buy orders are replaced, and the given prices (for the
+// SaveOrders records the result of an orders refresh: newly unlocked skins, finishers
+// and minis are added (unlocks are never removed), buy orders are replaced, and the given prices (for the
 // items we have orders on) are upserted.
 func (s *Store) SaveOrders(ctx context.Context, u wardrobe.OrdersUpdate) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		// One statement for the whole unlock list; only new skins are inserted.
-		owned, err := jsonIDs(u.Owned)
-		if err != nil {
-			return err
+		// One statement per kind for the whole unlock list; only new unlocks are inserted.
+		owned := map[wardrobe.Kind][]int{}
+		for _, k := range u.Owned {
+			owned[k.Kind] = append(owned[k.Kind], k.ID)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO account_skins (skin_id, first_seen)
-			SELECT value, ? FROM json_each(?) WHERE true
-			ON CONFLICT (skin_id) DO NOTHING`, u.At.Unix(), owned); err != nil {
-			return err
+		for kind, ids := range owned {
+			idsJSON, err := jsonIDs(ids)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO account_skins (kind, skin_id, first_seen)
+				SELECT ?, value, ? FROM json_each(?) WHERE true
+				ON CONFLICT (kind, skin_id) DO NOTHING`, string(kind), u.At.Unix(), idsJSON); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM buy_orders"); err != nil {
 			return err
@@ -312,7 +326,7 @@ func (s *Store) LoadSnapshot(ctx context.Context) (wardrobe.Snapshot, error) {
 }
 
 func loadSnapshot(ctx context.Context, tx *sql.Tx) (wardrobe.Snapshot, error) {
-	snap := wardrobe.Snapshot{Owned: map[int]bool{}, Prices: map[int]wardrobe.Price{}, Delivery: map[int]int{}}
+	snap := wardrobe.Snapshot{Owned: map[wardrobe.Key]bool{}, Prices: map[int]wardrobe.Price{}, Delivery: map[int]int{}}
 	var err error
 	if snap.OrdersAt, err = metaTime(ctx, tx, metaOrdersAt); err != nil {
 		return snap, err
@@ -331,12 +345,12 @@ func loadSnapshot(ctx context.Context, tx *sql.Tx) (wardrobe.Snapshot, error) {
 			return snap, fmt.Errorf("meta %s: %w", metaChestSets, err)
 		}
 	}
-	err = each(ctx, tx, "SELECT skin_id FROM account_skins", nil, func(rows *sql.Rows) error {
-		var id int
-		if err := rows.Scan(&id); err != nil {
+	err = each(ctx, tx, "SELECT kind, skin_id FROM account_skins", nil, func(rows *sql.Rows) error {
+		var key wardrobe.Key
+		if err := rows.Scan(&key.Kind, &key.ID); err != nil {
 			return err
 		}
-		snap.Owned[id] = true
+		snap.Owned[key] = true
 		return nil
 	})
 	if err != nil {

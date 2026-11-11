@@ -60,6 +60,25 @@
         }
       ],
       "groups": []
+    },
+    {
+      "id": "finisher",
+      "name": "Finishers",
+      "unlockUrl": "https://api.guildwars2.com/v2/account/finishers",
+      "categories": [
+        {
+          "name": "Gem Store",
+          "groups": [
+            {
+              "groupName": "Finishers",
+              "content": [
+                {"id": "24", "name": "Twisted Watchwork Finisher", "rarity": "Rare", "sources": ["tp", "gwu"]}
+              ]
+            }
+          ]
+        }
+      ],
+      "groups": []
     }
   ]
 }
