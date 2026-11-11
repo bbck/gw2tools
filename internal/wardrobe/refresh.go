@@ -92,18 +92,18 @@ func ownedUnlocks(ctx context.Context, api API) ([]Key, error) {
 	return owned, nil
 }
 
-// PriceCandidates are the items worth pricing: those that unlock a Guaranteed Wardrobe
-// Unlock skin, finisher or mini, or a Black Lion weapon set skin, we don't have and haven't bought (an item for
-// it in the delivery box).
-// Items we have orders on are left out because RefreshOrders keeps them current.
-func PriceCandidates(c Catalog, snap Snapshot) []int {
+// PriceCandidates returns the items worth pricing: those that unlock a Guaranteed
+// Wardrobe Unlock skin, finisher or mini, or a Black Lion weapon set skin, we don't
+// have and haven't bought (an item for it in the delivery box). Items we have orders on
+// are left out because RefreshOrders keeps them current. keep is the items whose
+// stored prices a prices refresh keeps: the candidates and the items with orders.
+func PriceCandidates(c Catalog, snap Snapshot) (ids, keep []int) {
 	skip := map[int]bool{}
 	for _, o := range snap.Orders {
 		skip[o.ItemID] = true
 	}
-	locked, _ := c.locked(snap)
+	locked := c.locked(snap)
 	tracked := c.tracked()
-	var ids []int
 	for _, it := range c.Items {
 		if skip[it.ID] {
 			continue
@@ -116,7 +116,8 @@ func PriceCandidates(c Catalog, snap Snapshot) []int {
 		}
 	}
 	slices.Sort(ids)
-	return ids
+	keep = append(slices.Clone(ids), slices.Collect(maps.Keys(skip))...)
+	return ids, keep
 }
 
 // RefreshPrices is the infrequent, bulk refresh of prices for ids.

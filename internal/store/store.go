@@ -46,15 +46,20 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open opens (creating if needed) the database at path and applies migrations.
-func Open(path string) (*Store, error) {
+// dsn is the connection string for the database at path.
+func dsn(path string) string {
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "journal_mode(WAL)")
 	// Temp tables and sorts stay in memory; the scratch image has no /tmp.
 	q.Add("_pragma", "temp_store(MEMORY)")
-	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	return "file:" + path + "?" + q.Encode()
+}
+
+// Open opens (creating if needed) the database at path and applies migrations.
+func Open(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, err
 	}
@@ -334,13 +339,11 @@ func loadSnapshot(ctx context.Context, tx *sql.Tx) (wardrobe.Snapshot, error) {
 	if snap.PricesAt, err = metaTime(ctx, tx, metaPricesAt); err != nil {
 		return snap, err
 	}
-	var chest string
-	err = tx.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", metaChestSets).Scan(&chest)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-	case err != nil:
+	chest, err := metaValue(ctx, tx, metaChestSets)
+	if err != nil {
 		return snap, err
-	default:
+	}
+	if chest != "" {
 		if err := json.Unmarshal([]byte(chest), &snap.Chest); err != nil {
 			return snap, fmt.Errorf("meta %s: %w", metaChestSets, err)
 		}
@@ -492,13 +495,19 @@ func each(ctx context.Context, q querier, query string, args []any, fn func(*sql
 	return rows.Err()
 }
 
-func metaTime(ctx context.Context, q querier, key string) (time.Time, error) {
+// metaValue is the stored value for key, "" if there is none.
+func metaValue(ctx context.Context, q querier, key string) (string, error) {
 	var v string
 	err := q.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, nil
+		return "", nil
 	}
-	if err != nil {
+	return v, err
+}
+
+func metaTime(ctx context.Context, q querier, key string) (time.Time, error) {
+	v, err := metaValue(ctx, q, key)
+	if err != nil || v == "" {
 		return time.Time{}, err
 	}
 	sec, err := strconv.ParseInt(v, 10, 64)

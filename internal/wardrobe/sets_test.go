@@ -104,12 +104,12 @@ func TestSetsOrdersBoughtAndUnpriced(t *testing.T) {
 func TestPriceCandidatesIncludeSetSkins(t *testing.T) {
 	c := setsCatalog()
 	c.Skins[sk(5)] = Skin{ID: sk(5), Name: "Echo"} // non-GWU, but in the "Done" set
-	ids := PriceCandidates(c, Snapshot{Owned: map[Key]bool{}})
+	ids, _ := PriceCandidates(c, Snapshot{Owned: map[Key]bool{}})
 	if !slices.Contains(ids, 50) {
 		t.Errorf("candidates = %v, want item 50 for set skin 5", ids)
 	}
 	c.Sets = nil
-	if ids := PriceCandidates(c, Snapshot{Owned: map[Key]bool{}}); slices.Contains(ids, 50) {
+	if ids, _ := PriceCandidates(c, Snapshot{Owned: map[Key]bool{}}); slices.Contains(ids, 50) {
 		t.Errorf("candidates = %v, item 50 unlocks no GWU or set skin", ids)
 	}
 }

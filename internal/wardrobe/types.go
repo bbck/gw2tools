@@ -62,10 +62,22 @@ type Catalog struct {
 	Skins map[Key]Skin
 	Items map[int]Item
 	Sets  []Set // by name
+
+	itemsBySkin map[Key][]int // set by Index
+}
+
+// Index precomputes the skin index of a catalogue that is reused across requests, so
+// pages don't rebuild it from every item on each render.
+func (c *Catalog) Index() {
+	c.itemsBySkin = nil
+	c.itemsBySkin = c.skinItems()
 }
 
 // skinItems indexes the catalogue by skin.
 func (c Catalog) skinItems() map[Key][]int {
+	if c.itemsBySkin != nil {
+		return c.itemsBySkin
+	}
 	out := make(map[Key][]int)
 	for _, it := range c.Items {
 		for _, s := range it.Skins {

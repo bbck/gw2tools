@@ -87,13 +87,17 @@ func TestRefreshOrders(t *testing.T) {
 func TestPriceCandidates(t *testing.T) {
 	// Skin 1 owned; item 40 has an order; item 50 is a non-GWU skin.
 	snap := Snapshot{Owned: map[Key]bool{sk(1): true}, Orders: []Order{{ItemID: 40}}}
-	got := PriceCandidates(testCatalog(), snap)
+	got, keep := PriceCandidates(testCatalog(), snap)
 	if want := []int{20, 30}; !slices.Equal(got, want) {
 		t.Errorf("candidates = %v, want %v", got, want)
 	}
+	// The order item's price is kept current by the orders refresh, so it is kept.
+	if want := []int{20, 30, 40}; !slices.Equal(keep, want) {
+		t.Errorf("keep = %v, want %v", keep, want)
+	}
 	// Bought the helm (item 20 in the delivery box): its skin is no longer priced.
 	snap.Delivery = map[int]int{20: 1}
-	got = PriceCandidates(testCatalog(), snap)
+	got, _ = PriceCandidates(testCatalog(), snap)
 	if want := []int{30}; !slices.Equal(got, want) {
 		t.Errorf("candidates with delivery = %v, want %v", got, want)
 	}

@@ -282,7 +282,7 @@ func TestChestSets(t *testing.T) {
 func TestMigrateUnlockKinds(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "v3.db")
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		t.Fatal(err)
 	}

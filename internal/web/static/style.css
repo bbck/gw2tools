@@ -78,8 +78,9 @@ code { background: #262a31; padding: 0.05rem 0.3rem; border-radius: 3px; }
 .empty, .footnote, .none { color: var(--muted); }
 
 table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); }
-th, td { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
-th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+th, td, .set-head, .set-row { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); }
+th, td { text-align: left; vertical-align: top; }
+th, .set-head { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
 tbody tr:hover { background: var(--hover); }
 .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* Status stripe on table rows and set rows. */
@@ -119,10 +120,7 @@ tr.row-top td:first-child, .set-row.row-top { box-shadow: inset 3px 0 var(--top)
   grid-template-columns: minmax(12rem, 1fr) 9rem 16rem 14rem;
   gap: 0 1rem;
   align-items: center;
-  padding: 0.35rem 0.6rem;
-  border-bottom: 1px solid var(--border);
 }
-.set-head { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
 .set-row .name::before { content: ""; display: inline-block; width: 1.1rem; color: var(--muted); }
 summary.set-row { cursor: pointer; list-style: none; }
 summary.set-row::-webkit-details-marker { display: none; }

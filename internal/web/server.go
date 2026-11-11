@@ -123,24 +123,19 @@ func (s *Server) Tick(ctx context.Context) error {
 		s.log.Warn("skipping refresh: catalogue not seeded, run `mise run seed`")
 		return nil
 	}
-	u, ordersErr := s.refreshOrders(ctx, cat)
-	return errors.Join(ordersErr, s.maybeRefreshPrices(ctx, cat, u, ordersErr), s.maybeRefreshChest(ctx))
+	return errors.Join(s.refreshOrders(ctx, cat), s.maybeRefreshPrices(ctx, cat), s.maybeRefreshChest(ctx))
 }
 
-func (s *Server) maybeRefreshPrices(ctx context.Context, cat wardrobe.Catalog, u wardrobe.OrdersUpdate, ordersErr error) error {
+// maybeRefreshPrices prices against the stored account state, which the orders
+// refresh has just saved (or, if it failed, the last good one).
+func (s *Server) maybeRefreshPrices(ctx context.Context, cat wardrobe.Catalog) error {
 	tried, err := s.store.PricesAttemptedAt(ctx)
 	if err != nil || s.now().Sub(tried) < s.intervals.Prices {
 		return err
 	}
-	snap := wardrobe.Snapshot{Owned: map[wardrobe.Key]bool{}, Orders: u.Orders, Delivery: u.Delivery}
-	for _, id := range u.Owned {
-		snap.Owned[id] = true
-	}
-	if ordersErr != nil {
-		// Fall back to the stored account state.
-		if snap, err = s.store.LoadSnapshot(ctx); err != nil {
-			return err
-		}
+	snap, err := s.store.LoadSnapshot(ctx)
+	if err != nil {
+		return err
 	}
 	return s.refreshPrices(ctx, cat, snap)
 }
@@ -170,7 +165,7 @@ func (s *Server) maybeRefreshChest(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) refreshOrders(ctx context.Context, cat wardrobe.Catalog) (wardrobe.OrdersUpdate, error) {
+func (s *Server) refreshOrders(ctx context.Context, cat wardrobe.Catalog) error {
 	start := s.now()
 	u, err := wardrobe.RefreshOrders(ctx, s.api, cat, start)
 	if err == nil {
@@ -178,10 +173,10 @@ func (s *Server) refreshOrders(ctx context.Context, cat wardrobe.Catalog) (wardr
 	}
 	if err != nil {
 		s.recordError(ctx, s.store.SetOrdersError, err)
-		return u, fmt.Errorf("orders: %w", err)
+		return fmt.Errorf("orders: %w", err)
 	}
 	s.log.Info("refreshed orders", "unlocked", len(u.Owned), "orders", len(u.Orders), "delivery_items", len(u.Delivery), "took", s.now().Sub(start).Round(time.Millisecond))
-	return u, nil
+	return nil
 }
 
 func (s *Server) refreshPrices(ctx context.Context, cat wardrobe.Catalog, snap wardrobe.Snapshot) error {
@@ -192,15 +187,10 @@ func (s *Server) refreshPrices(ctx context.Context, cat wardrobe.Catalog, snap w
 	if err := s.store.SetPricesAttempt(ctx, start); err != nil {
 		return fmt.Errorf("prices: recording attempt: %w", err)
 	}
-	ids := wardrobe.PriceCandidates(cat, snap)
+	ids, keep := wardrobe.PriceCandidates(cat, snap)
 	s.log.Info("refreshing prices", "items", len(ids), "requests", gw2.Requests(len(ids)))
 	prices, err := wardrobe.RefreshPrices(ctx, s.api, ids)
 	if err == nil {
-		// Keep the candidates and the order items (kept current by the orders refresh).
-		keep := slices.Clone(ids)
-		for _, o := range snap.Orders {
-			keep = append(keep, o.ItemID)
-		}
 		err = s.store.SavePrices(ctx, keep, prices, start)
 	}
 	if err != nil {
@@ -234,6 +224,7 @@ func (s *Server) loadCatalog(ctx context.Context) (wardrobe.Catalog, time.Time, 
 		if err != nil {
 			return cat, seeded, err
 		}
+		cat.Index() // reused by every render until the next seed
 		s.catalog, s.catalogSeed = cat, seeded
 	}
 	return s.catalog, seeded, nil

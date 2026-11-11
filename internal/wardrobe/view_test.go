@@ -31,6 +31,15 @@ func testCatalog() Catalog {
 
 func sk(id int) Key { return SkinKey(id) }
 
+// skinIDs lists the rows' skin ids, in order.
+func skinIDs(rows []Row) []int {
+	var out []int
+	for _, r := range rows {
+		out = append(out, r.Skin.ID.ID)
+	}
+	return out
+}
+
 func price(id, buy, sell int) Price {
 	return Price{ItemID: id, BuyPrice: buy, BuyQuantity: 10, SellPrice: sell, SellQuantity: 10}
 }
@@ -48,10 +57,7 @@ func TestCheapestPicksCheapestItemPerSkinAndSorts(t *testing.T) {
 	}
 	v := BuildView(testCatalog(), snap, 25)
 
-	var got []int
-	for _, r := range v.Cheapest {
-		got = append(got, r.Skin.ID.ID)
-	}
+	got := skinIDs(v.Cheapest)
 	// Delta (50) < Bravo (200) < Alpha (300) < Charlie (1000). Echo is not GWU.
 	if want := []int{4, 2, 1, 3}; !slices.Equal(got, want) {
 		t.Fatalf("cheapest skins = %v, want %v", got, want)
@@ -173,10 +179,7 @@ func TestOthersRedundantAndIgnoredOrders(t *testing.T) {
 		t.Fatalf("cheapest = %+v", v.Cheapest)
 	}
 	// Box order 1 covers skins 3 and 4, both outside the limit; Echo order 2 is top.
-	var others []int
-	for _, r := range v.Others {
-		others = append(others, r.Skin.ID.ID)
-	}
+	others := skinIDs(v.Others)
 	// Outbid rows first (3 then 4 by cost), then the top bid on skin 5.
 	if want := []int{3, 4, 5}; !slices.Equal(others, want) {
 		t.Fatalf("others = %v, want %v", others, want)
@@ -252,10 +255,7 @@ func TestDeliveryBoxSkins(t *testing.T) {
 		t.Errorf("box row = %+v, want only the locked skin 4", d)
 	}
 	// Bought skins leave the cheapest list; only Alpha (skin 1) remains.
-	var cheapest []int
-	for _, r := range v.Cheapest {
-		cheapest = append(cheapest, r.Skin.ID.ID)
-	}
+	cheapest := skinIDs(v.Cheapest)
 	if !slices.Equal(cheapest, []int{1}) {
 		t.Errorf("cheapest = %v, want [1]", cheapest)
 	}
@@ -335,7 +335,7 @@ func TestFinishersAndMinisAreTrackedLikeSkins(t *testing.T) {
 	if v.GWUTotal != 7 || v.GWUOwned != 1 {
 		t.Errorf("gwu = %d / %d, want 1 / 7", v.GWUOwned, v.GWUTotal)
 	}
-	cands := PriceCandidates(c, snap)
+	cands, _ := PriceCandidates(c, snap)
 	if !slices.Contains(cands, 80) || slices.Contains(cands, 90) || slices.Contains(cands, 70) || slices.Contains(cands, 60) {
 		t.Errorf("candidates = %v: want the GWU mini, not the non-GWU mini, owned finisher or item with an order", cands)
 	}

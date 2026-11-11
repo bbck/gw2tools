@@ -67,7 +67,7 @@ func BuildSets(c Catalog, snap Snapshot) SetsView {
 		inChest[setKey(name)] = true
 	}
 	skinItems := c.skinItems()
-	locked, _ := c.locked(snap)
+	locked := c.locked(snap)
 	bySkin, _, _ := groupOrders(c, snap, locked)
 
 	for _, set := range c.Sets {
@@ -83,7 +83,7 @@ func BuildSets(c Catalog, snap Snapshot) SetsView {
 				r.Bought++
 				continue
 			}
-			row, _ := skinRow(c.Skins[id], skinItems[id], c, snap.Prices, bySkin[id])
+			row := skinRow(c.Skins[id], skinItems[id], c, snap.Prices, bySkin[id])
 			switch availability(row) {
 			case unpriced:
 				r.Unpriced++

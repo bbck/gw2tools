@@ -32,21 +32,32 @@
 {{/* Missing catalogue and refresh error banners. */}}
 {{define "banners"}}
 {{if not .Seeded}}
-<p class="banner error">No skin catalogue yet. Run <code>mise run seed</code> (or <code>gw2tools seed</code>) to load it.</p>
+<p class="banner error">No skin catalogue yet. Run {{template "seed-cmd"}} to load it.</p>
 {{end}}
 {{with .Errors.Orders}}<p class="banner error">Last orders refresh failed: {{.}}</p>{{end}}
 {{with .Errors.Prices}}<p class="banner error">Last prices refresh failed: {{.}}</p>{{end}}
 {{end}}
 
+{{define "seed-cmd"}}<code>mise run seed</code> (or <code>gw2tools seed</code>){{end}}
+
 {{define "item"}}<span class="item">{{.Name}}</span> <button type="button" class="copy" data-copy="{{.Name}}" title="Copy name for trading post search">⧉</button>{{end}}
 
+{{/* A Status as a badge. */}}
+{{define "badge"}}<span class="badge {{.Class}}">{{.}}</span>{{end}}
+
 {{/* An order's standing. SuggestedBid is set when outbid or tied, OutbidBy only when outbid. */}}
-{{define "status"}}<span class="badge {{.Status.Class}}">{{.Status}}</span>{{if .SuggestedBid}} <span class="detail">{{if .OutbidBy}}by {{coins .OutbidBy}}, {{end}}bid {{coins .SuggestedBid}}</span>{{end}}{{end}}
+{{define "status"}}{{template "badge" .Status}}{{if .SuggestedBid}} <span class="detail">{{if .OutbidBy}}by {{coins .OutbidBy}}, {{end}}bid {{coins .SuggestedBid}}</span>{{end}}{{end}}
 
 {{/* A skin Row's "My order" and "Status" cells. */}}
 {{define "order-cells"}}{{$row := .}}
     <td>{{range .Orders}}<div>{{template "bid" .}}{{if ne .Item.ID $row.Item.ID}} <span class="type">on {{template "item" .Item}}</span>{{end}}</div>{{else}}<span class="none">—</span>{{end}}</td>
-    <td>{{if .Orders}}{{range .Orders}}<div>{{template "status" .}}</div>{{end}}{{else}}<span class="badge none">No order</span>{{with .SuggestedBid}} <span class="detail">bid {{coins .}}</span>{{end}}{{end}}</td>
+    <td>{{range .Orders}}<div>{{template "status" .}}</div>{{else}}{{template "badge" .Status}}{{with .SuggestedBid}} <span class="detail">bid {{coins .}}</span>{{end}}{{end}}</td>
+{{end}}
+
+{{/* A Price's "Top bid" and "Lowest sell" cells. */}}
+{{define "market-cells"}}
+    <td class="num">{{coins .BuyPrice}}</td>
+    <td class="num">{{coins .SellPrice}}</td>
 {{end}}
 
 {{/* Our bid on an order: unit price and quantity. */}}

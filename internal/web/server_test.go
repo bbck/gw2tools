@@ -176,6 +176,7 @@ func TestWardrobePage(t *testing.T) {
 		"Owned Cape Item", // redundant order
 		"Tradeable Guaranteed Wardrobe Unlocks: <strong>3</strong> / 6", // owned cape, finisher and mini
 		`data-copy="Permanent Twisted Watchwork Finisher"`,              // finisher order is tracked
+		`<span class="badge none">No order</span>`,                      // the helm has no order
 		`data-copy="Carrion Flame Blade"`,                               // copy button holds the item name
 		`data-copy="Cheap &lt;Helm&gt;"`,                                // escaped in the attribute too
 		`<meta http-equiv="refresh" content="60">`,

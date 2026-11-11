@@ -45,8 +45,7 @@
     <td class="num">{{.Rank}}</td>
     <td>{{.Skin.Name}} <span class="type">{{.Skin.Type}}</span></td>
     <td>{{template "item" .Item}}</td>
-    <td class="num">{{coins .Price.BuyPrice}}</td>
-    <td class="num">{{coins .Price.SellPrice}}</td>
+    {{template "market-cells" .Price}}
     {{template "order-cells" .}}
   </tr>
   {{end}}
@@ -65,8 +64,7 @@
     <td>{{if $row.Skin.GWU}}✓{{end}}</td>
     <td>{{template "item" .Item}}</td>
     <td class="num">{{template "bid" .}}</td>
-    <td class="num">{{coins .Market.BuyPrice}}</td>
-    <td class="num">{{coins .Market.SellPrice}}</td>
+    {{template "market-cells" .Market}}
     <td>{{template "status" .}}</td>
   </tr>
   {{end}}{{end}}
