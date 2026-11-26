@@ -17,6 +17,12 @@ COPY --from=build --chown=65534:65534 /out/data /data
 COPY --from=build /out/gw2tools /gw2tools
 ENV GW2TOOLS_DB=/data/gw2tools.db \
     GW2TOOLS_LISTEN=:8080
+# Only labels that don't change per commit, so unchanged inputs give the same
+# digest (see the Image job in ci.yaml). Renovate reads source for changelogs.
+LABEL org.opencontainers.image.title="gw2tools" \
+      org.opencontainers.image.description="A collection of utilities for the game Guild Wars 2" \
+      org.opencontainers.image.source="https://github.com/bbck/gw2tools" \
+      org.opencontainers.image.licenses="MIT"
 EXPOSE 8080
 USER 65534:65534
 ENTRYPOINT ["/gw2tools"]

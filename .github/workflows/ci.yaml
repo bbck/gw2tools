@@ -5,6 +5,8 @@ name: CI
 # Pull requests are tested and built; pushes to master also publish
 # ghcr.io/bbck/gw2tools:rolling (and :sha-<commit>). The homelab pins
 # rolling@sha256:..., and Renovate opens a digest update when rolling moves.
+# The build is reproducible, so a push that doesn't change the image (docs,
+# CI, Renovate config) gives the same digest and rolling doesn't move.
 on:
   pull_request:
   push:
@@ -49,22 +51,13 @@ jobs:
       id-token: write
       packages: write
     env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/gw2tools
       PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Image Metadata
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        id: meta
-        with:
-          flavor: latest=false
-          images: ghcr.io/${{ github.repository_owner }}/gw2tools
-          tags: |
-            type=raw,value=rolling
-            type=sha,format=long
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -77,28 +70,49 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      # The digest rolling points to before this push. A missing tag hashes the
+      # empty output, which matches no real digest.
+      - name: Current Digest
+        id: current
+        if: ${{ env.PUBLISH == 'true' }}
+        run: echo "digest=sha256:$(docker buildx imagetools inspect --raw "${IMAGE}:rolling" | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      # Reproducible: a fixed SOURCE_DATE_EPOCH and rewritten file timestamps,
+      # no per-commit labels or annotations (the static labels are in the
+      # Dockerfile), and no buildx provenance, which records build times and
+      # would change the index digest. The Attestation step provides provenance
+      # instead, stored beside the image rather than in it.
       - name: Build and Push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
+        env:
+          SOURCE_DATE_EPOCH: 0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: false
+          outputs: type=image,push=${{ env.PUBLISH }},rewrite-timestamp=true
+          tags: |
+            ${{ env.IMAGE }}:rolling
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
 
+      # Only attest a new digest; one that's already published has its
+      # attestation from the commit that first built it.
       - name: Attestation
-        if: ${{ env.PUBLISH == 'true' }}
+        if: ${{ env.PUBLISH == 'true' && steps.build.outputs.digest != steps.current.outputs.digest }}
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           push-to-registry: true
-          subject-name: ghcr.io/${{ github.repository_owner }}/gw2tools
+          subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
 
       - name: Summary
         if: ${{ env.PUBLISH == 'true' }}
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/gw2tools
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: echo "${IMAGE}:rolling@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+          UNCHANGED: ${{ steps.build.outputs.digest == steps.current.outputs.digest }}
+        run: |
+          echo "${IMAGE}:rolling@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$UNCHANGED" == true ]]; then
+            echo "Unchanged: rolling already pointed to this digest." >> "$GITHUB_STEP_SUMMARY"
+          fi
