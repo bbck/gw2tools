@@ -73,6 +73,8 @@ func (f *fakeAPI) AccountMinis(context.Context) ([]int, error) { return []int{7}
 func (f *fakeAPI) CurrentBuys(context.Context) ([]gw2.Transaction, error) {
 	return []gw2.Transaction{
 		{ID: 1, ItemID: 10, Price: 140, Quantity: 1}, // outbid on Flame Blade
+		{ID: 4, ItemID: 10, Price: 147, Quantity: 1}, // a second, higher bid on it
+		{ID: 5, ItemID: 10, Price: 147, Quantity: 1}, // and a third at the highest price
 		{ID: 2, ItemID: 30, Price: 99, Quantity: 1},  // skin 3 already owned
 		{ID: 3, ItemID: 60, Price: 900, Quantity: 1}, // top bid on the watchwork finisher
 	}, nil
@@ -183,10 +185,15 @@ func TestWardrobePage(t *testing.T) {
 		`<title>Wardrobe Unlocks · gw2tools</title>`,
 		`<a href="/wardrobe" class="active">Wardrobe Unlocks</a>`,
 		"next in 1h 0m",
+		`<span class="detail">+1 lower bid</span> <span class="detail">+1 at the same price</span>`, // the blade's other orders
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
+	}
+	// Only the blade's highest bid (147c) is shown, not the 140c one.
+	if strings.Contains(body, `<span class="c">40</span>`) || !strings.Contains(body, `<span class="c">47</span>`) {
+		t.Error("only the highest bid on a skin should be shown")
 	}
 	// Cheapest first: the helm (20c) ranks above the blade (150c).
 	if strings.Index(body, "Cheap &lt;Helm&gt;") > strings.Index(body, "Carrion Flame Blade") {
@@ -214,6 +221,13 @@ func TestWardrobeLimit(t *testing.T) {
 	}
 	if !strings.Contains(others, "Carrion Flame Blade") {
 		t.Error("outbid order outside the limit should be listed under other orders")
+	}
+	// One row per skin: the blade's highest bid, noting the others.
+	if n := strings.Count(others, `data-copy="Carrion Flame Blade"`); n != 1 {
+		t.Errorf("blade listed %d times under other orders, want 1", n)
+	}
+	if !strings.Contains(others, "+1 lower bid") || strings.Contains(others, `<span class="c">40</span>`) {
+		t.Error("other orders should show the highest bid and count the rest")
 	}
 }
 
@@ -438,6 +452,8 @@ func TestSetsPage(t *testing.T) {
 		"Carrion Flame Blade", // the missing skin's item, with its copy button
 		`data-copy="Carrion Flame Blade"`,
 		`badge outbid`, // the fake's 140c order is under the 150c top bid
+		"3 orders",     // every bid on the blade counts
+		"+1 lower bid",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)

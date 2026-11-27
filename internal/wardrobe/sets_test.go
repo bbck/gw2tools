@@ -70,9 +70,11 @@ func TestSetsOrdersBoughtAndUnpriced(t *testing.T) {
 		Orders: []Order{
 			{ID: 1, ItemID: 10, Price: 300, Quantity: 1}, // skin 1: top
 			{ID: 2, ItemID: 20, Price: 50, Quantity: 1},  // skin 2: outbid
+			{ID: 3, ItemID: 11, Price: 200, Quantity: 1}, // skin 1: outbid, but not its highest bid
 		},
 		Prices: map[int]Price{
 			10: {ItemID: 10, BuyPrice: 300, SellPrice: 400, TopBuyQuantity: 1},
+			11: {ItemID: 11, BuyPrice: 500, SellPrice: 600, TopBuyQuantity: 1},
 			20: {ItemID: 20, BuyPrice: 80, SellPrice: 100, TopBuyQuantity: 1},
 			// Item 30 (skins 3 and 4) and item 40 are not priced yet.
 		},
@@ -85,8 +87,14 @@ func TestSetsOrdersBoughtAndUnpriced(t *testing.T) {
 		byName[r.Set.Name] = r
 	}
 	cheap := byName["Cheap"]
-	if cheap.Orders != 2 || cheap.Status != StatusOutbid {
-		t.Errorf("cheap orders = %d, status = %v, want 2 and outbid", cheap.Orders, cheap.Status)
+	if cheap.Orders != 3 || cheap.Status != StatusOutbid {
+		t.Errorf("cheap orders = %d, status = %v, want 3 and outbid", cheap.Orders, cheap.Status)
+	}
+	// Each skin's status is its highest bid's: skin 1's 300c order is top.
+	for _, m := range cheap.Missing {
+		if want := map[Key]Status{sk(1): StatusTop, sk(2): StatusOutbid}[m.Skin.ID]; m.Status != want {
+			t.Errorf("skin %v status = %v, want %v", m.Skin.ID, m.Status, want)
+		}
 	}
 	pricey := byName["Pricey"]
 	if pricey.Bought != 1 || len(pricey.Missing) != 1 || pricey.Unpriced != 1 || pricey.Cost != 0 {
@@ -98,6 +106,20 @@ func TestSetsOrdersBoughtAndUnpriced(t *testing.T) {
 	}
 	if pricey.Status != StatusNoOrder {
 		t.Errorf("pricey status = %v", pricey.Status)
+	}
+}
+
+func TestSetsCountEachOrderOnce(t *testing.T) {
+	// One order on the box, which unlocks both of Pricey's skins.
+	snap := Snapshot{
+		Owned:  map[Key]bool{},
+		Orders: []Order{{ID: 1, ItemID: 30, Price: 100, Quantity: 1}},
+		Prices: map[int]Price{30: {ItemID: 30, BuyPrice: 100, SellPrice: 200, TopBuyQuantity: 1}},
+	}
+	for _, r := range BuildSets(setsCatalog(), snap).Sets {
+		if r.Set.Name == "Pricey" && (r.Orders != 1 || len(r.Missing) != 2) {
+			t.Errorf("pricey orders = %d, missing = %d; want 1 and 2", r.Orders, len(r.Missing))
+		}
 	}
 }
 

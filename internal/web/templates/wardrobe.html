@@ -58,14 +58,14 @@
 <table>
   <thead><tr><th>Unlock</th><th>GWU</th><th>Order item</th><th class="num">My bid</th><th class="num">Top bid</th><th class="num">Lowest sell</th><th>Status</th></tr></thead>
   <tbody>
-  {{range .Others}}{{$row := .}}{{range .Orders}}
+  {{range .Others}}{{$row := .}}{{with .Order}}
   <tr class="row-{{.Status.Class}}">
     <td>{{$row.Skin.Name}} <span class="type">{{$row.Skin.Type}}</span></td>
     <td>{{if $row.Skin.GWU}}✓{{end}}</td>
     <td>{{template "item" .Item}}</td>
     <td class="num">{{template "bid" .}}</td>
     {{template "market-cells" .Market}}
-    <td>{{template "status" .}}</td>
+    <td>{{template "status" .}}{{template "more-orders" $row}}</td>
   </tr>
   {{end}}{{end}}
   </tbody>

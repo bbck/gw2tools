@@ -14,19 +14,21 @@ const (
 	StatusOutbid
 	StatusTied // at the top price, but someone else is bidding the same
 	StatusTop
+	StatusBehindOwn // below the top bid, but the top bid is one of our own orders
 )
 
-// statuses holds each Status's label, CSS class and attention rank (lower sorts
-// first because it needs action sooner).
+// statuses holds each Status's label, CSS class, attention rank (lower sorts first
+// because it needs action sooner) and standing (lower is closer to filling).
 var statuses = [...]struct {
-	label, class string
-	attention    int
+	label, class        string
+	attention, standing int
 }{
-	StatusNoOrder: {"No order", "none", 3},
-	StatusUnknown: {"Unknown", "unknown", 2},
-	StatusOutbid:  {"Outbid", "outbid", 0},
-	StatusTied:    {"Tied", "tied", 1},
-	StatusTop:     {"Top bid", "top", 3},
+	StatusNoOrder:   {"No order", "none", 3, 5},
+	StatusUnknown:   {"Unknown", "unknown", 2, 4},
+	StatusOutbid:    {"Outbid", "outbid", 0, 3},
+	StatusTied:      {"Tied", "tied", 1, 2},
+	StatusTop:       {"Top bid", "top", 3, 0},
+	StatusBehindOwn: {"Behind own bid", "own", 3, 1}, // raising it would only outbid ourselves
 }
 
 func (s Status) String() string { return statuses[s].label }
@@ -35,6 +37,17 @@ func (s Status) String() string { return statuses[s].label }
 func (s Status) Class() string { return statuses[s].class }
 
 func attention(s Status) int { return statuses[s].attention }
+
+func standing(s Status) int { return statuses[s].standing }
+
+// mostUrgent is whichever status needs action sooner. Any order's status beats
+// StatusNoOrder.
+func mostUrgent(a, b Status) Status {
+	if a == StatusNoOrder || attention(b) < attention(a) {
+		return b
+	}
+	return a
+}
 
 // OrderRow is one of our buy orders with its standing.
 type OrderRow struct {
@@ -59,11 +72,32 @@ type Row struct {
 	Cost int
 	// SuggestedBid outbids the current top buy order by one copper.
 	SuggestedBid int
-	Orders       []OrderRow
-	// Status is the standing of whichever of our orders on the skin most needs
-	// attention: an outbid order shows even if another order is top.
+	// Orders are our orders on the skin, highest bid first. The pages show only the
+	// highest, the one closest to winning, and count the rest.
+	Orders []OrderRow
+	// Status is the standing of our highest bid on the skin.
 	Status Status
 }
+
+// Order is our highest bid on the skin, nil when there are none.
+func (r Row) Order() *OrderRow {
+	if len(r.Orders) == 0 {
+		return nil
+	}
+	return &r.Orders[0]
+}
+
+// SameBids counts our orders on the skin besides the highest at the same price.
+func (r Row) SameBids() int {
+	n := 0
+	for n+1 < len(r.Orders) && r.Orders[n+1].Order.Price == r.Orders[0].Order.Price {
+		n++
+	}
+	return n
+}
+
+// LowerBids counts our orders on the skin below the highest bid.
+func (r Row) LowerBids() int { return max(len(r.Orders)-1, 0) - r.SameBids() }
 
 // DeliveryRow is an item in the delivery box that unlocks GWU skins we don't have.
 type DeliveryRow struct {
@@ -150,11 +184,10 @@ func BuildView(c Catalog, snap Snapshot, limit int) View {
 }
 
 // groupOrders rates our orders and groups them by the locked skins their items
-// unlock. redundant are orders whose skins are all unlocked or bought; other counts
-// orders on items that unlock no skin.
+// unlock, highest bid first; between equal bids, the one closest to filling.
+// redundant are orders whose skins are all unlocked or bought; other counts orders
+// on items that unlock no skin.
 func groupOrders(c Catalog, snap Snapshot, locked func(Key) bool) (bySkin map[Key][]OrderRow, redundant []OrderRow, other int) {
-	// Quantity we are bidding per item and price, to tell "top" from "tied".
-	type itemPrice struct{ item, price int }
 	ourQty := map[itemPrice]int{}
 	for _, o := range snap.Orders {
 		ourQty[itemPrice{o.ItemID, o.Price}] += o.Quantity
@@ -166,7 +199,7 @@ func groupOrders(c Catalog, snap Snapshot, locked func(Key) bool) (bySkin map[Ke
 			other++
 			continue
 		}
-		or := orderRow(o, it, snap.Prices, ourQty[itemPrice{o.ItemID, o.Price}])
+		or := orderRow(o, it, snap.Prices, ourQty)
 		var wanted []Key
 		for _, s := range it.Skins {
 			if locked(s) {
@@ -180,6 +213,12 @@ func groupOrders(c Catalog, snap Snapshot, locked func(Key) bool) (bySkin map[Ke
 		for _, s := range wanted {
 			bySkin[s] = append(bySkin[s], or)
 		}
+	}
+	for _, orders := range bySkin {
+		slices.SortFunc(orders, func(a, b OrderRow) int {
+			return cmp.Or(cmp.Compare(b.Order.Price, a.Order.Price),
+				cmp.Compare(standing(a.Status), standing(b.Status)), cmp.Compare(a.ID, b.ID))
+		})
 	}
 	slices.SortFunc(redundant, func(a, b OrderRow) int {
 		return cmp.Or(cmp.Compare(a.Item.Name, b.Item.Name), cmp.Compare(a.ID, b.ID))
@@ -233,7 +272,10 @@ func byCost(a, b Row) int {
 // skinRow picks the cheapest priced item for the skin. Cost is 0 when no item has
 // any buy orders or sell listings; Item is then the lowest-id item, if any.
 func skinRow(sk Skin, itemIDs []int, c Catalog, prices map[int]Price, orders []OrderRow) Row {
-	r := Row{Skin: sk, Orders: orders, Status: mostUrgent(orders)}
+	r := Row{Skin: sk, Orders: orders}
+	if o := r.Order(); o != nil {
+		r.Status = o.Status
+	}
 	for _, id := range itemIDs {
 		p, ok := prices[id]
 		if !ok {
@@ -257,19 +299,11 @@ func skinRow(sk Skin, itemIDs []int, c Catalog, prices map[int]Price, orders []O
 	return r
 }
 
-// mostUrgent is the status of whichever order needs action soonest, StatusNoOrder
-// when there are none.
-func mostUrgent(orders []OrderRow) Status {
-	s := StatusNoOrder
-	for i, o := range orders {
-		if i == 0 || attention(o.Status) < attention(s) {
-			s = o.Status
-		}
-	}
-	return s
-}
+// itemPrice keys the quantity we are bidding per item and price, to tell "top" from
+// "tied", and our own orders from other bidders'.
+type itemPrice struct{ item, price int }
 
-func orderRow(o Order, it Item, prices map[int]Price, ourQtyAtPrice int) OrderRow {
+func orderRow(o Order, it Item, prices map[int]Price, ourQty map[itemPrice]int) OrderRow {
 	r := OrderRow{Order: o, Item: it}
 	p, ok := prices[o.ItemID]
 	if !ok {
@@ -278,11 +312,13 @@ func orderRow(o Order, it Item, prices map[int]Price, ourQtyAtPrice int) OrderRo
 	}
 	r.Market = p
 	switch {
+	case p.BuyPrice > o.Price && ourQty[itemPrice{o.ItemID, p.BuyPrice}] > 0:
+		r.Status = StatusBehindOwn
 	case p.BuyPrice > o.Price:
 		r.Status = StatusOutbid
 		r.OutbidBy = p.BuyPrice - o.Price
 		r.SuggestedBid = p.BuyPrice + 1
-	case p.BuyPrice == o.Price && p.TopBuyQuantity > ourQtyAtPrice:
+	case p.BuyPrice == o.Price && p.TopBuyQuantity > ourQty[itemPrice{o.ItemID, o.Price}]:
 		r.Status = StatusTied
 		r.SuggestedBid = p.BuyPrice + 1
 	default:

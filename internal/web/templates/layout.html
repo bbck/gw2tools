@@ -48,11 +48,14 @@
 {{/* An order's standing. SuggestedBid is set when outbid or tied, OutbidBy only when outbid. */}}
 {{define "status"}}{{template "badge" .Status}}{{if .SuggestedBid}} <span class="detail">{{if .OutbidBy}}by {{coins .OutbidBy}}, {{end}}bid {{coins .SuggestedBid}}</span>{{end}}{{end}}
 
-{{/* A skin Row's "My order" and "Status" cells. */}}
+{{/* A skin Row's "My order" and "Status" cells, for its highest bid. */}}
 {{define "order-cells"}}{{$row := .}}
-    <td>{{range .Orders}}<div>{{template "bid" .}}{{if ne .Item.ID $row.Item.ID}} <span class="type">on {{template "item" .Item}}</span>{{end}}</div>{{else}}<span class="none">—</span>{{end}}</td>
-    <td>{{range .Orders}}<div>{{template "status" .}}</div>{{else}}{{template "badge" .Status}}{{with .SuggestedBid}} <span class="detail">bid {{coins .}}</span>{{end}}{{end}}</td>
+    <td>{{with .Order}}{{template "bid" .}}{{if ne .Item.ID $row.Item.ID}} <span class="type">on {{template "item" .Item}}</span>{{end}}{{else}}<span class="none">—</span>{{end}}</td>
+    <td>{{with .Order}}{{template "status" .}}{{else}}{{template "badge" .Status}}{{with .SuggestedBid}} <span class="detail">bid {{coins .}}</span>{{end}}{{end}}{{template "more-orders" .}}</td>
 {{end}}
+
+{{/* How many orders a skin Row has besides the highest bid it shows. */}}
+{{define "more-orders"}}{{with .LowerBids}} <span class="detail">+{{.}} lower bid{{if gt . 1}}s{{end}}</span>{{end}}{{with .SameBids}} <span class="detail">+{{.}} at the same price</span>{{end}}{{end}}
 
 {{/* A Price's "Top bid" and "Lowest sell" cells. */}}
 {{define "market-cells"}}

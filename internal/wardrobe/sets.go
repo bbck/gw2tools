@@ -22,7 +22,10 @@ type SetRow struct {
 	// is a lower bound. Untradeable counts Missing skins no trading post item unlocks.
 	Unpriced    int
 	Untradeable int
-	// Orders counts our orders on Missing skins; Status is the most urgent of them.
+	// Orders counts all our orders on Missing skins, once each even when an order's
+	// item unlocks several of them. Status is the most urgent of the Missing skins'
+	// statuses, and a skin's status is its highest bid's, so the set's lower bids are
+	// counted in Orders but don't affect Status.
 	Orders int
 	Status Status
 }
@@ -72,7 +75,7 @@ func BuildSets(c Catalog, snap Snapshot) SetsView {
 
 	for _, set := range c.Sets {
 		r := SetRow{Set: set, InChest: inChest[setKey(set.Name)]}
-		var orders []OrderRow
+		orders := map[int]bool{} // ids of our orders on Missing skins
 		for _, skinID := range set.Skins {
 			id := SkinKey(skinID)
 			switch {
@@ -91,10 +94,13 @@ func BuildSets(c Catalog, snap Snapshot) SetsView {
 				r.Untradeable++
 			}
 			r.Cost += row.Cost
-			orders = append(orders, row.Orders...)
+			for _, o := range row.Orders {
+				orders[o.ID] = true
+			}
+			r.Status = mostUrgent(r.Status, row.Status)
 			r.Missing = append(r.Missing, row)
 		}
-		r.Orders, r.Status = len(orders), mostUrgent(orders)
+		r.Orders = len(orders)
 		slices.SortFunc(r.Missing, func(a, b Row) int {
 			return cmp.Or(cmp.Compare(availability(a), availability(b)), byCost(a, b))
 		})

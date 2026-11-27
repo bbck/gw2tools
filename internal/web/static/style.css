@@ -86,7 +86,7 @@ tbody tr:hover { background: var(--hover); }
 /* Status stripe on table rows and set rows. */
 tr.row-outbid td:first-child, .set-row.row-outbid { box-shadow: inset 3px 0 var(--outbid); }
 tr.row-tied td:first-child, .set-row.row-tied { box-shadow: inset 3px 0 var(--tied); }
-tr.row-top td:first-child, .set-row.row-top { box-shadow: inset 3px 0 var(--top); }
+tr.row-top td:first-child, .set-row.row-top, tr.row-own td:first-child, .set-row.row-own { box-shadow: inset 3px 0 var(--top); }
 
 .type { color: var(--muted); font-size: 0.85rem; }
 .detail { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
@@ -99,7 +99,7 @@ tr.row-top td:first-child, .set-row.row-top { box-shadow: inset 3px 0 var(--top)
   border: 1px solid currentColor;
   white-space: nowrap;
 }
-.badge.top { color: var(--top); }
+.badge.top, .badge.own { color: var(--top); }
 .badge.tied { color: var(--tied); }
 .badge.outbid { color: var(--outbid); }
 .badge.unknown, .badge.none { color: var(--unknown); }

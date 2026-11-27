@@ -211,22 +211,63 @@ func TestUnknownPrice(t *testing.T) {
 	}
 }
 
-func TestRowStatusShowsMostUrgentOrder(t *testing.T) {
+func TestRowShowsHighestBid(t *testing.T) {
 	snap := Snapshot{
 		Owned: map[Key]bool{},
 		Orders: []Order{
-			{ID: 1, ItemID: 10, Price: 500, Quantity: 1}, // top
-			{ID: 2, ItemID: 11, Price: 100, Quantity: 1}, // outbid
+			{ID: 1, ItemID: 11, Price: 400, Quantity: 1}, // outbid
+			{ID: 2, ItemID: 11, Price: 600, Quantity: 1}, // outbid, at the highest price
+			{ID: 3, ItemID: 11, Price: 550, Quantity: 1}, // outbid
+			{ID: 4, ItemID: 10, Price: 600, Quantity: 1}, // top: shown over order 2 at the same price
 		},
 		Prices: map[int]Price{
-			10: {ItemID: 10, BuyPrice: 500, SellPrice: 600, TopBuyQuantity: 1},
-			11: {ItemID: 11, BuyPrice: 300, SellPrice: 900, TopBuyQuantity: 1},
+			10: {ItemID: 10, BuyPrice: 600, SellPrice: 800, TopBuyQuantity: 1},
+			11: {ItemID: 11, BuyPrice: 700, SellPrice: 900, TopBuyQuantity: 1},
 			40: price(40, 50, 60),
 		},
 	}
 	v := BuildView(testCatalog(), snap, 1)
-	if len(v.Others) != 1 || v.Others[0].Skin.ID != sk(1) || v.Others[0].Status != StatusOutbid {
-		t.Fatalf("others = %+v, want skin 1 outbid", v.Others)
+	if len(v.Others) != 1 || v.Others[0].Skin.ID != sk(1) {
+		t.Fatalf("others = %+v, want skin 1", v.Others)
+	}
+	r := v.Others[0]
+	// The row's status is the highest bid's, even though the others are outbid.
+	if o := r.Order(); o == nil || o.ID != 4 || r.Status != StatusTop || r.LowerBids() != 2 || r.SameBids() != 1 {
+		t.Errorf("row order = %+v, status = %v, lower = %d, same = %d; want order 4, top, 2 lower, 1 same",
+			o, r.Status, r.LowerBids(), r.SameBids())
+	}
+	if v.Cheapest[0].Order() != nil || v.Cheapest[0].LowerBids() != 0 || v.Cheapest[0].SameBids() != 0 {
+		t.Errorf("skin without orders = %+v", v.Cheapest[0])
+	}
+}
+
+func TestLowerBidBehindOwnTopBid(t *testing.T) {
+	orders := []Order{
+		{ID: 1, ItemID: 40, Price: 50, Quantity: 1},
+		{ID: 2, ItemID: 40, Price: 55, Quantity: 1},
+	}
+	for _, tc := range []struct {
+		name string
+		top  int
+		want Status
+		bid  int
+	}{
+		{"our higher order is top", 55, StatusBehindOwn, 0},
+		{"someone outbid both", 60, StatusOutbid, 61},
+	} {
+		snap := Snapshot{
+			Owned:  map[Key]bool{},
+			Orders: orders,
+			Prices: map[int]Price{40: {ItemID: 40, BuyPrice: tc.top, SellPrice: 70, TopBuyQuantity: 1}},
+		}
+		r := BuildView(testCatalog(), snap, 25).Cheapest[0]
+		if r.Skin.ID != sk(4) || len(r.Orders) != 2 {
+			t.Fatalf("%s: row = %+v", tc.name, r)
+		}
+		if o := r.Orders[1]; o.ID != 1 || o.Status != tc.want || o.SuggestedBid != tc.bid {
+			t.Errorf("%s: lower order %d status %v bid %d, want order 1 %v bid %d",
+				tc.name, o.ID, o.Status, o.SuggestedBid, tc.want, tc.bid)
+		}
 	}
 }
 
